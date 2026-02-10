@@ -1,0 +1,85 @@
+# Binaries
+lyon
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.log
+*.tmp
+
+# Docker volumes
+postgres-data/
+
+# Environment and Secrets
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# API Keys and Credentials
+*_key
+*_secret
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+credentials.json
+secrets.json
+secret.yaml
+secrets.yaml
+
+# Cloud Provider Credentials
+.aws/
+.gcloud/
+.azure/
+google-credentials.json
+aws-credentials.json
+
+# SSH Keys
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+*.ppk
+
+# Temporal Certificates
+temporal.crt
+temporal.key
+temporal-ca.crt
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+database.json
+
+# Backup files that might contain sensitive data
+*.bak
+*.backup
+*.sql
+*.dump
