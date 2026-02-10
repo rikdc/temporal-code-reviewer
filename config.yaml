@@ -1,0 +1,29 @@
+openrouter:
+  api_key: ""  # Set via OPENROUTER_API_KEY env var
+  base_url: "https://openrouter.ai/api/v1"
+  timeout: 30
+
+agents:
+  security:
+    model: "anthropic/claude-3.5-sonnet"
+    max_tokens: 2000
+    temperature: 0.3
+    prompt_file: "security.md"
+
+  style:
+    model: "anthropic/claude-3.5-haiku"
+    max_tokens: 1500
+    temperature: 0.5
+    prompt_file: "style.md"
+
+  logic:
+    model: "anthropic/claude-3.5-sonnet"
+    max_tokens: 2000
+    temperature: 0.3
+    prompt_file: "logic.md"
+
+  documentation:
+    model: "anthropic/claude-3.5-haiku"
+    max_tokens: 1500
+    temperature: 0.5
+    prompt_file: "documentation.md"
