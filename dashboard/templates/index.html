@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lyon - PR Review Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🦁 Lyon PR Review Dashboard</h1>
+            <p class="workflow-id">Workflow ID: <code>{{.WorkflowID}}</code></p>
+        </header>
+
+        <div class="timeline">
+            <div class="agent-lane" id="agent-Security" data-agent="Security">
+                <div class="agent-header">
+                    <span class="agent-name">🔒 Security</span>
+                    <span class="status">Pending</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill"></div>
+                    <span class="progress-text">0%</span>
+                </div>
+                <div class="findings"></div>
+            </div>
+
+            <div class="agent-lane" id="agent-Style" data-agent="Style">
+                <div class="agent-header">
+                    <span class="agent-name">✨ Style</span>
+                    <span class="status">Pending</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill"></div>
+                    <span class="progress-text">0%</span>
+                </div>
+                <div class="findings"></div>
+            </div>
+
+            <div class="agent-lane" id="agent-Logic" data-agent="Logic">
+                <div class="agent-header">
+                    <span class="agent-name">🧠 Logic</span>
+                    <span class="status">Pending</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill"></div>
+                    <span class="progress-text">0%</span>
+                </div>
+                <div class="findings"></div>
+            </div>
+
+            <div class="agent-lane" id="agent-Documentation" data-agent="Documentation">
+                <div class="agent-header">
+                    <span class="agent-name">📚 Documentation</span>
+                    <span class="status">Pending</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill"></div>
+                    <span class="progress-text">0%</span>
+                </div>
+                <div class="findings"></div>
+            </div>
+
+            <div class="separator"></div>
+
+            <div class="agent-lane" id="agent-Synthesis" data-agent="Synthesis">
+                <div class="agent-header">
+                    <span class="agent-name">🔮 Synthesis</span>
+                    <span class="status">Pending</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill"></div>
+                    <span class="progress-text">0%</span>
+                </div>
+                <div class="findings"></div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Real-time updates via Server-Sent Events</p>
+            <p><a href="http://localhost:8080" target="_blank">View in Temporal UI</a></p>
+        </footer>
+    </div>
+
+    <script>
+        const workflowId = "{{.WorkflowID | js}}";
+    </script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
