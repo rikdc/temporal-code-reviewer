@@ -12,13 +12,13 @@ import (
 
 // Server handles dashboard HTTP requests
 type Server struct {
-	eventBus *events.EventBus
+	eventBus events.Subscriber
 	logger   *zap.Logger
 	tmpl     *template.Template
 }
 
 // NewServer creates a new dashboard server
-func NewServer(eventBus *events.EventBus, logger *zap.Logger) *Server {
+func NewServer(eventBus events.Subscriber, logger *zap.Logger) *Server {
 	tmpl := template.Must(template.ParseFiles("dashboard/templates/index.html"))
 	return &Server{
 		eventBus: eventBus,
