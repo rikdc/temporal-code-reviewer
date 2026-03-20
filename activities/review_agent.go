@@ -18,26 +18,26 @@ import (
 type ReviewAgent struct {
 	Name         string
 	ReviewFocus  string // e.g. "security vulnerabilities", "code style and quality"
-	EventBus     *events.EventBus
+	EventBus     events.Publisher
 	Logger       *zap.Logger
-	LLMClient    *llm.Client
+	LLMClient    llm.Reviewer
 	Config       *config.AgentConfig
 	PromptLoader *llm.PromptLoader
 }
 
-func NewSecurityAgent(eb *events.EventBus, l *zap.Logger, c *llm.Client, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
+func NewSecurityAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
 	return &ReviewAgent{Name: "Security", ReviewFocus: "security vulnerabilities", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptLoader: pl}
 }
 
-func NewStyleAgent(eb *events.EventBus, l *zap.Logger, c *llm.Client, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
+func NewStyleAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
 	return &ReviewAgent{Name: "Style", ReviewFocus: "code style and quality", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptLoader: pl}
 }
 
-func NewLogicAgent(eb *events.EventBus, l *zap.Logger, c *llm.Client, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
+func NewLogicAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
 	return &ReviewAgent{Name: "Logic", ReviewFocus: "logic errors and correctness issues", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptLoader: pl}
 }
 
-func NewDocsAgent(eb *events.EventBus, l *zap.Logger, c *llm.Client, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
+func NewDocsAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
 	return &ReviewAgent{Name: "Documentation", ReviewFocus: "documentation quality", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptLoader: pl}
 }
 

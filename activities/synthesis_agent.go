@@ -14,7 +14,7 @@ import (
 
 // SynthesisAgent aggregates results from all review agents
 type SynthesisAgent struct {
-	EventBus *events.EventBus
+	EventBus events.Publisher
 	Logger   *zap.Logger
 }
 

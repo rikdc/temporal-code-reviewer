@@ -6,6 +6,17 @@ import (
 	"github.com/rikdc/temporal-code-reviewer/types"
 )
 
+// Publisher abstracts event publishing for testability.
+type Publisher interface {
+	Publish(event types.WorkflowEvent)
+}
+
+// Subscriber abstracts event subscription for testability.
+type Subscriber interface {
+	Subscribe(workflowID string) chan types.WorkflowEvent
+	Unsubscribe(workflowID string, eventChan chan types.WorkflowEvent)
+}
+
 // EventBus provides in-memory pub/sub for workflow progress events
 type EventBus struct {
 	mu          sync.RWMutex

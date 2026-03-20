@@ -11,6 +11,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// Reviewer abstracts LLM review operations for testability.
+type Reviewer interface {
+	Review(ctx context.Context, req ReviewRequest) (*ReviewResponse, error)
+}
+
 // Client provides OpenRouter LLM integration with structured JSON output
 type Client struct {
 	client *openai.Client
