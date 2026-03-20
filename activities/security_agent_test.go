@@ -6,11 +6,10 @@ import (
 	"testing"
 
 	"github.com/rikdc/temporal-code-reviewer/types"
-	"go.uber.org/zap/zaptest"
 )
 
-// TestSecurityAgent_ParseResponse tests JSON parsing with valid and invalid inputs
-func TestSecurityAgent_ParseResponse(t *testing.T) {
+// TestReviewAgent_ParseResponse tests JSON parsing with valid and invalid inputs
+func TestReviewAgent_ParseResponse(t *testing.T) {
 	tests := []struct {
 		name           string
 		content        string
@@ -117,10 +116,8 @@ func TestSecurityAgent_ParseResponse(t *testing.T) {
 	}
 }
 
-// TestSecurityAgent_MapStatus tests status mapping
-func TestSecurityAgent_MapStatus(t *testing.T) {
-	agent := &SecurityAgent{}
-
+// TestReviewAgent_MapStatus tests status mapping
+func TestReviewAgent_MapStatus(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
@@ -136,7 +133,7 @@ func TestSecurityAgent_MapStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := agent.mapStatus(tt.input)
+			got := mapStatus(tt.input)
 			if got != tt.want {
 				t.Errorf("mapStatus(%q) = %q, want %q", tt.input, got, tt.want)
 			}
@@ -144,10 +141,8 @@ func TestSecurityAgent_MapStatus(t *testing.T) {
 	}
 }
 
-// TestSecurityAgent_SeverityEmoji tests severity emoji mapping
-func TestSecurityAgent_SeverityEmoji(t *testing.T) {
-	agent := &SecurityAgent{}
-
+// TestReviewAgent_SeverityEmoji tests severity emoji mapping
+func TestReviewAgent_SeverityEmoji(t *testing.T) {
 	tests := []struct {
 		severity string
 		want     string
@@ -164,7 +159,7 @@ func TestSecurityAgent_SeverityEmoji(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.severity, func(t *testing.T) {
-			got := agent.severityEmoji(tt.severity)
+			got := severityEmoji(tt.severity)
 			if got != tt.want {
 				t.Errorf("severityEmoji(%q) = %q, want %q", tt.severity, got, tt.want)
 			}
@@ -172,11 +167,8 @@ func TestSecurityAgent_SeverityEmoji(t *testing.T) {
 	}
 }
 
-// TestSecurityAgent_FormatFindings tests findings formatting
-func TestSecurityAgent_FormatFindings(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	agent := &SecurityAgent{Logger: logger}
-
+// TestReviewAgent_FormatFindings tests findings formatting
+func TestReviewAgent_FormatFindings(t *testing.T) {
 	tests := []struct {
 		name           string
 		review         *StructuredReview
@@ -248,7 +240,7 @@ func TestSecurityAgent_FormatFindings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := agent.formatFindings(tt.review, tt.rawContent)
+			got := formatFindings("Security", tt.review, tt.rawContent)
 
 			if len(got) < tt.minCount {
 				t.Errorf("formatFindings() length = %d, want at least %d", len(got), tt.minCount)
@@ -272,7 +264,7 @@ func TestSecurityAgent_FormatFindings(t *testing.T) {
 			if tt.rawContent == "" && len(tt.review.Findings) > 0 {
 				// Should have emoji for each finding
 				for _, f := range tt.review.Findings {
-					emoji := agent.severityEmoji(f.Severity)
+					emoji := severityEmoji(f.Severity)
 					if !strings.Contains(gotText, emoji) {
 						t.Errorf("formatFindings() should contain emoji %q for severity %q", emoji, f.Severity)
 					}
@@ -288,25 +280,22 @@ func TestSecurityAgent_FormatFindings(t *testing.T) {
 	}
 }
 
-// TestSecurityAgent_FormatFindings_Edge tests edge cases
-func TestSecurityAgent_FormatFindings_Edge(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	agent := &SecurityAgent{Logger: logger}
-
+// TestReviewAgent_FormatFindings_Edge tests edge cases
+func TestReviewAgent_FormatFindings_Edge(t *testing.T) {
 	t.Run("empty summary", func(t *testing.T) {
 		review := &StructuredReview{
 			Status:   "passed",
 			Summary:  "",
 			Findings: []Finding{},
 		}
-		got := agent.formatFindings(review, "")
+		got := formatFindings("Security", review, "")
 		if len(got) == 0 {
 			t.Error("formatFindings() should not be empty even with empty summary")
 		}
 	})
 
 	t.Run("nil review with raw content", func(t *testing.T) {
-		got := agent.formatFindings(&StructuredReview{}, "raw")
+		got := formatFindings("Security", &StructuredReview{}, "raw")
 		if len(got) == 0 {
 			t.Error("formatFindings() should not be empty with raw content")
 		}
@@ -324,8 +313,7 @@ func TestSecurityAgent_FormatFindings_Edge(t *testing.T) {
 				{Severity: "", Title: "", Description: ""},
 			},
 		}
-		got := agent.formatFindings(review, "")
-		// Should still format without crashing
+		got := formatFindings("Security", review, "")
 		if len(got) == 0 {
 			t.Error("formatFindings() should handle empty finding fields")
 		}
@@ -340,7 +328,7 @@ func TestSecurityAgent_FormatFindings_Edge(t *testing.T) {
 				{Severity: "high", Title: "Long Issue", Description: longDesc},
 			},
 		}
-		got := agent.formatFindings(review, "")
+		got := formatFindings("Security", review, "")
 		gotText := strings.Join(got, "\n")
 		if !strings.Contains(gotText, longDesc) {
 			t.Error("formatFindings() should handle long descriptions")

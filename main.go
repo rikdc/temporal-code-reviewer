@@ -84,43 +84,19 @@ func main() {
 
 	// Register review agents with LLM integration
 	w.RegisterActivityWithOptions(
-		(&activities.SecurityAgent{
-			EventBus:     eventBus,
-			Logger:       logger,
-			LLMClient:    llmClient,
-			Config:       &cfg.Agents.Security,
-			PromptLoader: promptLoader,
-		}).Execute,
+		activities.NewSecurityAgent(eventBus, logger, llmClient, &cfg.Agents.Security, promptLoader).Execute,
 		activity.RegisterOptions{Name: "SecurityAgent.Execute"},
 	)
 	w.RegisterActivityWithOptions(
-		(&activities.StyleAgent{
-			EventBus:     eventBus,
-			Logger:       logger,
-			LLMClient:    llmClient,
-			Config:       &cfg.Agents.Style,
-			PromptLoader: promptLoader,
-		}).Execute,
+		activities.NewStyleAgent(eventBus, logger, llmClient, &cfg.Agents.Style, promptLoader).Execute,
 		activity.RegisterOptions{Name: "StyleAgent.Execute"},
 	)
 	w.RegisterActivityWithOptions(
-		(&activities.LogicAgent{
-			EventBus:     eventBus,
-			Logger:       logger,
-			LLMClient:    llmClient,
-			Config:       &cfg.Agents.Logic,
-			PromptLoader: promptLoader,
-		}).Execute,
+		activities.NewLogicAgent(eventBus, logger, llmClient, &cfg.Agents.Logic, promptLoader).Execute,
 		activity.RegisterOptions{Name: "LogicAgent.Execute"},
 	)
 	w.RegisterActivityWithOptions(
-		(&activities.DocsAgent{
-			EventBus:     eventBus,
-			Logger:       logger,
-			LLMClient:    llmClient,
-			Config:       &cfg.Agents.Documentation,
-			PromptLoader: promptLoader,
-		}).Execute,
+		activities.NewDocsAgent(eventBus, logger, llmClient, &cfg.Agents.Documentation, promptLoader).Execute,
 		activity.RegisterOptions{Name: "DocsAgent.Execute"},
 	)
 	w.RegisterActivityWithOptions(
