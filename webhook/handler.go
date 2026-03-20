@@ -1,7 +1,6 @@
 package webhook
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -97,7 +96,7 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 		TaskQueue: "pr-review-queue",
 	}
 
-	workflowRun, err := h.temporalClient.ExecuteWorkflow(context.Background(), options, "PRReviewWorkflow", input)
+	workflowRun, err := h.temporalClient.ExecuteWorkflow(r.Context(), options, "PRReviewWorkflow", input)
 	if err != nil {
 		h.logger.Error("Failed to start workflow", zap.Error(err))
 		http.Error(w, "Failed to start workflow", http.StatusInternalServerError)

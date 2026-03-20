@@ -3,6 +3,7 @@ package workflows
 import (
 	"time"
 
+	"github.com/rikdc/temporal-code-reviewer/activities"
 	"github.com/rikdc/temporal-code-reviewer/types"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
@@ -27,7 +28,7 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.R
 	logger.Info("Fetching PR diff", "diff_url", input.DiffURL)
 
 	var diffContent string
-	err := workflow.ExecuteActivity(ctx, "DiffFetcher.FetchDiff", input.DiffURL).Get(ctx, &diffContent)
+	err := workflow.ExecuteActivity(ctx, activities.ActivityDiffFetcher, input.DiffURL).Get(ctx, &diffContent)
 	if err != nil {
 		logger.Error("Diff fetch failed", "error", err)
 		return nil, err
@@ -45,10 +46,10 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.R
 	logger.Info("Launching parallel review agents")
 
 	// Call activities by their full method names
-	securityFuture := workflow.ExecuteActivity(ctx, "SecurityAgent.Execute", agentInput)
-	styleFuture := workflow.ExecuteActivity(ctx, "StyleAgent.Execute", agentInput)
-	logicFuture := workflow.ExecuteActivity(ctx, "LogicAgent.Execute", agentInput)
-	docsFuture := workflow.ExecuteActivity(ctx, "DocsAgent.Execute", agentInput)
+	securityFuture := workflow.ExecuteActivity(ctx, activities.ActivitySecurity, agentInput)
+	styleFuture := workflow.ExecuteActivity(ctx, activities.ActivityStyle, agentInput)
+	logicFuture := workflow.ExecuteActivity(ctx, activities.ActivityLogic, agentInput)
+	docsFuture := workflow.ExecuteActivity(ctx, activities.ActivityDocs, agentInput)
 
 	// Wait for all agents to complete
 	var securityResult, styleResult, logicResult, docsResult types.AgentResult
@@ -93,7 +94,7 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.R
 	}
 
 	var summary types.ReviewSummary
-	err = workflow.ExecuteActivity(ctx, "SynthesisAgent.Execute", synthesisInput).Get(ctx, &summary)
+	err = workflow.ExecuteActivity(ctx, activities.ActivitySynthesis, synthesisInput).Get(ctx, &summary)
 	if err != nil {
 		logger.Error("Synthesis agent failed", "error", err)
 		return nil, err

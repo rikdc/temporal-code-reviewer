@@ -79,29 +79,29 @@ func main() {
 	diffFetcher := activities.NewDiffFetcher(logger)
 	w.RegisterActivityWithOptions(
 		diffFetcher.FetchDiff,
-		activity.RegisterOptions{Name: "DiffFetcher.FetchDiff"},
+		activity.RegisterOptions{Name: activities.ActivityDiffFetcher},
 	)
 
 	// Register review agents with LLM integration
 	w.RegisterActivityWithOptions(
 		activities.NewSecurityAgent(eventBus, logger, llmClient, &cfg.Agents.Security, promptLoader).Execute,
-		activity.RegisterOptions{Name: "SecurityAgent.Execute"},
+		activity.RegisterOptions{Name: activities.ActivitySecurity},
 	)
 	w.RegisterActivityWithOptions(
 		activities.NewStyleAgent(eventBus, logger, llmClient, &cfg.Agents.Style, promptLoader).Execute,
-		activity.RegisterOptions{Name: "StyleAgent.Execute"},
+		activity.RegisterOptions{Name: activities.ActivityStyle},
 	)
 	w.RegisterActivityWithOptions(
 		activities.NewLogicAgent(eventBus, logger, llmClient, &cfg.Agents.Logic, promptLoader).Execute,
-		activity.RegisterOptions{Name: "LogicAgent.Execute"},
+		activity.RegisterOptions{Name: activities.ActivityLogic},
 	)
 	w.RegisterActivityWithOptions(
 		activities.NewDocsAgent(eventBus, logger, llmClient, &cfg.Agents.Documentation, promptLoader).Execute,
-		activity.RegisterOptions{Name: "DocsAgent.Execute"},
+		activity.RegisterOptions{Name: activities.ActivityDocs},
 	)
 	w.RegisterActivityWithOptions(
 		(&activities.SynthesisAgent{EventBus: eventBus, Logger: logger}).Execute,
-		activity.RegisterOptions{Name: "SynthesisAgent.Execute"},
+		activity.RegisterOptions{Name: activities.ActivitySynthesis},
 	)
 
 	// Start worker in background

@@ -73,7 +73,7 @@ func TestReviewAgent_Execute_Success(t *testing.T) {
 	env.RegisterActivity(agent.Execute)
 
 	val, err := env.ExecuteActivity(agent.Execute, types.AgentReviewInput{
-		PRReviewInput: types.PRReviewInput{PRNumber: 42, Title: "Test PR", RepoOwner: "koho", RepoName: "service"},
+		PRReviewInput: types.PRReviewInput{PRNumber: 42, Title: "Test PR", RepoOwner: "rikdc", RepoName: "service"},
 		DiffContent:   "+added line",
 	})
 
@@ -114,7 +114,7 @@ func TestReviewAgent_Execute_LLMError(t *testing.T) {
 	env.RegisterActivity(agent.Execute)
 
 	_, err := env.ExecuteActivity(agent.Execute, types.AgentReviewInput{
-		PRReviewInput: types.PRReviewInput{PRNumber: 42, Title: "Test PR", RepoOwner: "koho", RepoName: "service"},
+		PRReviewInput: types.PRReviewInput{PRNumber: 42, Title: "Test PR", RepoOwner: "rikdc", RepoName: "service"},
 		DiffContent:   "+added line",
 	})
 
@@ -151,7 +151,7 @@ func TestReviewAgent_Execute_InvalidJSON(t *testing.T) {
 	env.RegisterActivity(agent.Execute)
 
 	val, err := env.ExecuteActivity(agent.Execute, types.AgentReviewInput{
-		PRReviewInput: types.PRReviewInput{PRNumber: 42, Title: "Test PR", RepoOwner: "koho", RepoName: "service"},
+		PRReviewInput: types.PRReviewInput{PRNumber: 42, Title: "Test PR", RepoOwner: "rikdc", RepoName: "service"},
 		DiffContent:   "+added line",
 	})
 
