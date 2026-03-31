@@ -113,12 +113,12 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 
 	// Build commit message and create commit
 	if len(applied) > 0 {
-		var msgParts []string
-		msgParts = append(msgParts, fmt.Sprintf("fix: ai-reviewed fixes for PR #%d\n", input.PRNumber))
+		var b strings.Builder
+		fmt.Fprintf(&b, "fix: ai-reviewed fixes for PR #%d\n", input.PRNumber)
 		for _, fix := range applied {
-			msgParts = append(msgParts, fmt.Sprintf("- %s", fix.CommitMsg))
+			fmt.Fprintf(&b, "\n- %s", fix.CommitMsg)
 		}
-		commitMsg := strings.Join(msgParts, "\n")
+		commitMsg := b.String()
 
 		if err := a.createCommitWithDiffs(ctx, input.RepoOwner, input.RepoName, branchName, headSHA, applied, commitMsg); err != nil {
 			return types.CoalescedChangeset{}, fmt.Errorf("create commit: %w", err)

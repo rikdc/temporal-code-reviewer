@@ -105,6 +105,7 @@ func (a *CreatePRActivity) ensureLabel(ctx context.Context, owner, repo, name, c
 }
 
 func (a *CreatePRActivity) addLabels(ctx context.Context, owner, repo string, prNumber int, labels []string) {
+	// Best-effort — label application is non-critical; don't fail the PR creation
 	_, _, err := a.client.Issues.AddLabelsToIssue(ctx, owner, repo, prNumber, labels)
 	_ = err
 }

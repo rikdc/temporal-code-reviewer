@@ -124,31 +124,30 @@ Return a JSON object with a "decisions" array — one decision per finding.`,
 	decisions := make([]types.TriageDecision, 0, len(input.Findings))
 	for _, finding := range input.Findings {
 		d, ok := decisionMap[finding.Title]
-		if !ok {
-			decisions = append(decisions, types.TriageDecision{
-				Finding:         finding,
-				AutoFixable:     false,
-				Reason:          "no matching triage decision from LLM — defaulting to human-required",
-				FixInstructions: "",
-			})
-			continue
-		}
-		decisions = append(decisions, types.TriageDecision{
+		td := types.TriageDecision{
 			Finding:         finding,
 			AutoFixable:     d.AutoFixable,
 			Reason:          d.Reason,
 			FixInstructions: d.FixInstructions,
-		})
+		}
+		if !ok {
+			td.AutoFixable = false
+			td.Reason = "no matching triage decision from LLM — defaulting to human-required"
+			td.FixInstructions = ""
+		}
+		decisions = append(decisions, td)
 	}
 
 	// Progress: 100% - Complete
 	activity.RecordHeartbeat(ctx, 100)
 	a.publishProgress(workflowID, 100)
 
+	autoCount := countAutoFixable(decisions)
+
 	result := &types.AgentResult{
 		AgentName: "Triage",
 		Status:    types.StatusCompleted,
-		Findings:  formatTriageFindings(decisions),
+		Findings:  formatTriageFindings(decisions, autoCount),
 		Progress:  100,
 		Timestamp: time.Now(),
 	}
@@ -164,7 +163,7 @@ Return a JSON object with a "decisions" array — one decision per finding.`,
 	a.Logger.Info("Triage agent completed",
 		zap.String("workflow_id", workflowID),
 		zap.Int("total", len(decisions)),
-		zap.Int("auto_fixable", countAutoFixable(decisions)))
+		zap.Int("auto_fixable", autoCount))
 
 	return decisions, nil
 }
@@ -195,9 +194,8 @@ func (a *TriageAgent) handleError(workflowID string, err error) error {
 	return err
 }
 
-func formatTriageFindings(decisions []types.TriageDecision) []string {
+func formatTriageFindings(decisions []types.TriageDecision, autoCount int) []string {
 	var findings []string
-	autoCount := countAutoFixable(decisions)
 	humanCount := len(decisions) - autoCount
 
 	findings = append(findings, fmt.Sprintf("**Triage Results:** %d auto-fixable, %d human-required", autoCount, humanCount))

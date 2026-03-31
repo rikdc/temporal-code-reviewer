@@ -14,22 +14,23 @@ type StructuredReview struct {
 	Summary  string          `json:"summary"`  // Overall assessment
 }
 
-// extractJSON removes markdown code blocks and other common wrappers
+// extractJSON removes markdown code blocks and other common wrappers.
 func extractJSON(content string) string {
-	// Remove markdown code blocks: ```json ... ``` or ``` ... ```
-	if idx := strings.Index(content, "```json"); idx != -1 {
-		content = content[idx+7:]
-		if end := strings.Index(content, "```"); end != -1 {
-			content = content[:end]
-		}
-	} else if idx := strings.Index(content, "```"); idx != -1 {
-		content = content[idx+3:]
-		if end := strings.Index(content, "```"); end != -1 {
-			content = content[:end]
+	// Find the opening fence: prefer ```json over bare ```
+	startIdx := strings.Index(content, "```json")
+	offset := 7
+	if startIdx == -1 {
+		startIdx = strings.Index(content, "```")
+		offset = 3
+	}
+
+	if startIdx != -1 {
+		content = content[startIdx+offset:]
+		if endIdx := strings.Index(content, "```"); endIdx != -1 {
+			content = content[:endIdx]
 		}
 	}
 
-	// Trim whitespace
 	return strings.TrimSpace(content)
 }
 
