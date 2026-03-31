@@ -65,12 +65,20 @@ Your response must match this EXACT schema:
     {
       "severity": "critical" | "high" | "medium" | "low",
       "title": "Brief description of the documentation issue",
-      "description": "Detailed explanation with line references and suggested improvements"
+      "description": "Detailed explanation with line references and suggested improvements",
+      "file": "relative/path/to/file.go",
+      "line": 42,
+      "suggested_fix": "Concrete documentation text to add or change"
     }
   ],
   "summary": "Overall assessment of documentation quality"
 }
 ```
+
+### Finding Location Fields
+- **file**: The relative file path where the issue is found (from the diff headers)
+- **line**: The best-effort line number in the new version of the file
+- **suggested_fix**: The concrete documentation text to add or change. For godoc comments, include the full comment line.
 
 ### Status Values
 - **passed**: Documentation is complete and clear
@@ -92,22 +100,34 @@ Your response must match this EXACT schema:
     {
       "severity": "high",
       "title": "Missing godoc for exported function",
-      "description": "Line 15: Exported function `ProcessPayment` has no godoc comment. Add:\n\n// ProcessPayment validates the payment request and processes the transaction.\n// Returns the transaction ID on success or an error if validation fails or\n// the payment processor is unavailable.\nfunc ProcessPayment(req PaymentRequest) (string, error)"
+      "description": "Line 15: Exported function `ProcessPayment` has no godoc comment.",
+      "file": "payments/handler.go",
+      "line": 15,
+      "suggested_fix": "// ProcessPayment validates the payment request and processes the transaction.\n// Returns the transaction ID on success or an error if validation fails or\n// the payment processor is unavailable."
     },
     {
       "severity": "medium",
       "title": "Complex algorithm needs explanation",
-      "description": "Lines 45-70: The backoff retry logic is complex but has no explanatory comments. Add a comment explaining the exponential backoff strategy and why it's necessary."
+      "description": "Lines 45-70: The backoff retry logic is complex but has no explanatory comments.",
+      "file": "retry/backoff.go",
+      "line": 45,
+      "suggested_fix": "// retryWithBackoff uses exponential backoff starting at 100ms, doubling each attempt\n// up to maxRetries. This prevents overwhelming the upstream service during outages."
     },
     {
       "severity": "medium",
       "title": "Error return conditions not documented",
-      "description": "Line 89: Function `FetchUser` can return multiple error types (ErrNotFound, ErrUnauthorized, network errors) but godoc doesn't specify which errors can be returned or when."
+      "description": "Line 89: Function `FetchUser` can return multiple error types but godoc doesn't specify which.",
+      "file": "service/user.go",
+      "line": 89,
+      "suggested_fix": "// FetchUser retrieves a user by ID.\n// Returns ErrNotFound if the user does not exist, ErrUnauthorized if the\n// caller lacks permission, or a wrapped network error on connectivity failure."
     },
     {
       "severity": "low",
       "title": "README missing configuration section",
-      "description": "README.md: No section documenting environment variables or configuration options. Add a Configuration section listing OPENROUTER_API_KEY and other settings."
+      "description": "README.md: No section documenting environment variables or configuration options.",
+      "file": "README.md",
+      "line": 1,
+      "suggested_fix": "## Configuration\n\n| Variable | Required | Description |\n|---|---|---|\n| OPENROUTER_API_KEY | Yes | API key for OpenRouter LLM service |"
     }
   ],
   "summary": "Public API functions need godoc comments. Complex logic would benefit from explanatory comments. README should document configuration options."
