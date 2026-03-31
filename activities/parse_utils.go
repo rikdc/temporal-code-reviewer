@@ -3,23 +3,15 @@ package activities
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/rikdc/temporal-code-reviewer/types"
 )
 
 // StructuredReview represents the expected JSON structure from the LLM
 type StructuredReview struct {
-	Status   string    `json:"status"`   // "passed", "warning", "failed"
-	Findings []Finding `json:"findings"` // Array of findings
-	Summary  string    `json:"summary"`  // Overall assessment
-}
-
-// Finding represents a single review finding
-type Finding struct {
-	Severity     string `json:"severity"`               // "critical", "high", "medium", "low"
-	Title        string `json:"title"`                   // Brief description
-	Description  string `json:"description"`             // Detailed explanation
-	File         string `json:"file,omitempty"`          // relative file path
-	Line         int    `json:"line,omitempty"`           // best-effort line number
-	SuggestedFix string `json:"suggested_fix,omitempty"` // review agent's proposed fix
+	Status   string          `json:"status"`   // "passed", "warning", "failed"
+	Findings []types.Finding `json:"findings"` // Array of findings
+	Summary  string          `json:"summary"`  // Overall assessment
 }
 
 // extractJSON removes markdown code blocks and other common wrappers
@@ -53,7 +45,7 @@ func parseStructuredReview(content string, agentName string) (*StructuredReview,
 		return &StructuredReview{
 			Status:  "warning",
 			Summary: "Review completed but response format was not valid JSON",
-			Findings: []Finding{
+			Findings: []types.Finding{
 				{
 					Severity:    "low",
 					Title:       "Raw LLM Response",

@@ -12,6 +12,11 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+var (
+	findingSeverityRe = regexp.MustCompile(`\*\*\[(\w+)\]\s+(.+?)\*\*`)
+	nonAlphanumRe     = regexp.MustCompile(`[^a-zA-Z0-9-]`)
+)
+
 // PRReviewWorkflow orchestrates diff fetching, parallel agent execution, triage, and auto-fix.
 func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.PRReviewResult, error) {
 	logger := workflow.GetLogger(ctx)
@@ -290,8 +295,7 @@ func flattenFindings(results []types.AgentResult) []types.Finding {
 // parseFindingString attempts to parse a formatted finding string back into a Finding struct.
 func parseFindingString(s string) (types.Finding, bool) {
 	// Match pattern: emoji **[severity] Title**
-	re := regexp.MustCompile(`\*\*\[(\w+)\]\s+(.+?)\*\*`)
-	matches := re.FindStringSubmatch(s)
+	matches := findingSeverityRe.FindStringSubmatch(s)
 	if len(matches) >= 3 {
 		return types.Finding{
 			Severity:    matches[1],
@@ -310,8 +314,7 @@ func parseFindingString(s string) (types.Finding, bool) {
 
 // sanitise makes a string safe for use in a workflow ID.
 func sanitise(s string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9-]`)
-	result := re.ReplaceAllString(s, "-")
+	result := nonAlphanumRe.ReplaceAllString(s, "-")
 	if len(result) > 50 {
 		result = result[:50]
 	}

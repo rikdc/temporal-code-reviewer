@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rikdc/temporal-code-reviewer/config"
@@ -118,7 +119,7 @@ Analyze the code changes and return your findings in JSON format as specified in
 		AgentName:          a.Name,
 		Status:             mapStatus(review.Status),
 		Findings:           formatFindings(a.Name, review, rawContent),
-		StructuredFindings: toTypedFindings(review.Findings),
+		StructuredFindings: review.Findings,
 		Progress:           100,
 		Timestamp:          time.Now(),
 	}
@@ -227,25 +228,9 @@ func formatFindings(agentName string, review *StructuredReview, rawContent strin
 	return findings
 }
 
-// toTypedFindings converts internal Finding structs to types.Finding for downstream use.
-func toTypedFindings(findings []Finding) []types.Finding {
-	out := make([]types.Finding, len(findings))
-	for i, f := range findings {
-		out[i] = types.Finding{
-			Severity:     f.Severity,
-			Title:        f.Title,
-			Description:  f.Description,
-			File:         f.File,
-			Line:         f.Line,
-			SuggestedFix: f.SuggestedFix,
-		}
-	}
-	return out
-}
-
 func lowercaseFirst(s string) string {
 	if s == "" {
 		return s
 	}
-	return string(s[0]|0x20) + s[1:]
+	return strings.ToLower(s[:1]) + s[1:]
 }

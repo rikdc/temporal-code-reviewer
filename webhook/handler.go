@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/rikdc/temporal-code-reviewer/types"
+	"github.com/rikdc/temporal-code-reviewer/workflows"
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 )
@@ -106,7 +107,7 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 		TaskQueue: "pr-review-queue",
 	}
 
-	workflowRun, err := h.temporalClient.ExecuteWorkflow(r.Context(), options, "PRReviewWorkflow", input)
+	workflowRun, err := h.temporalClient.ExecuteWorkflow(r.Context(), options, workflows.PRReviewWorkflow, input)
 	if err != nil {
 		h.logger.Error("Failed to start workflow", zap.Error(err))
 		http.Error(w, "Failed to start workflow", http.StatusInternalServerError)

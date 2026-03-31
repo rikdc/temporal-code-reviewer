@@ -171,11 +171,13 @@ func truncateDiff(diff string) string {
 	return truncated + "\n\n[... diff truncated ...]"
 }
 
+var prDiffURLRe = regexp.MustCompile(`^https://github\.com/([^/]+)/([^/]+)/pull/(\d+)\.diff$`)
+
 // parsePRDiffURL parses a GitHub PR diff URL into its components.
 // Returns (owner, repo, number, true) for URLs like
 // https://github.com/owner/repo/pull/42.diff, or ("", "", 0, false) otherwise.
 func parsePRDiffURL(url string) (owner, repo string, number int, ok bool) {
-	re := regexp.MustCompile(`^https://github\.com/([^/]+)/([^/]+)/pull/(\d+)\.diff$`)
+	re := prDiffURLRe
 	matches := re.FindStringSubmatch(url)
 	if len(matches) != 4 {
 		return "", "", 0, false

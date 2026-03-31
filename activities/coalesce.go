@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/go-github/v68/github"
 	"github.com/rikdc/temporal-code-reviewer/types"
@@ -45,7 +44,13 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 		return types.CoalescedChangeset{}, nil
 	}
 
-	branchName := fmt.Sprintf("ai-fixes/pr-%d-%d", input.PRNumber, time.Now().Unix())
+	// Derive branch name deterministically so that activity retries find the same
+	// branch via the idempotency check below instead of creating orphans.
+	shortSHA := input.HeadSHA
+	if len(shortSHA) > 8 {
+		shortSHA = shortSHA[:8]
+	}
+	branchName := fmt.Sprintf("ai-fixes/pr-%d-%s", input.PRNumber, shortSHA)
 
 	a.logger.Info("Coalescing fixes",
 		zap.Int("successful_count", len(successful)),
@@ -94,8 +99,8 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 
 		if hasConflict {
 			alreadyApplied := false
-			for _, a := range applied {
-				for _, af := range a.FilesChanged {
+			for _, prev := range applied {
+				for _, af := range prev.FilesChanged {
 					for _, ff := range fix.FilesChanged {
 						if af == ff {
 							alreadyApplied = true

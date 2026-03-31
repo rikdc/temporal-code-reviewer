@@ -182,7 +182,7 @@ func TestReviewAgent_FormatFindings(t *testing.T) {
 			review: &StructuredReview{
 				Status:  "failed",
 				Summary: "Found critical issues",
-				Findings: []Finding{
+				Findings: []types.Finding{
 					{Severity: "critical", Title: "SQL Injection", Description: "Use prepared statements"},
 					{Severity: "high", Title: "XSS Attack", Description: "Sanitize HTML output"},
 				},
@@ -196,7 +196,7 @@ func TestReviewAgent_FormatFindings(t *testing.T) {
 			review: &StructuredReview{
 				Status:   "passed",
 				Summary:  "All security checks passed",
-				Findings: []Finding{},
+				Findings: []types.Finding{},
 			},
 			rawContent:  "",
 			wantContain: []string{"Summary", "All security checks passed", "No security issues found"},
@@ -214,7 +214,7 @@ func TestReviewAgent_FormatFindings(t *testing.T) {
 			review: &StructuredReview{
 				Status:  "warning",
 				Summary: "Minor issue found",
-				Findings: []Finding{
+				Findings: []types.Finding{
 					{Severity: "medium", Title: "Hardcoded Secret", Description: "Move to environment variable"},
 				},
 			},
@@ -228,7 +228,7 @@ func TestReviewAgent_FormatFindings(t *testing.T) {
 			review: &StructuredReview{
 				Status:  "warning",
 				Summary: "Low priority issue",
-				Findings: []Finding{
+				Findings: []types.Finding{
 					{Severity: "low", Title: "Code Style", Description: "Consider refactoring"},
 				},
 			},
@@ -286,7 +286,7 @@ func TestReviewAgent_FormatFindings_Edge(t *testing.T) {
 		review := &StructuredReview{
 			Status:   "passed",
 			Summary:  "",
-			Findings: []Finding{},
+			Findings: []types.Finding{},
 		}
 		got := formatFindings("Security", review, "")
 		if len(got) == 0 {
@@ -309,7 +309,7 @@ func TestReviewAgent_FormatFindings_Edge(t *testing.T) {
 		review := &StructuredReview{
 			Status:  "warning",
 			Summary: "Issues found",
-			Findings: []Finding{
+			Findings: []types.Finding{
 				{Severity: "", Title: "", Description: ""},
 			},
 		}
@@ -324,7 +324,7 @@ func TestReviewAgent_FormatFindings_Edge(t *testing.T) {
 		review := &StructuredReview{
 			Status:  "failed",
 			Summary: "Long finding",
-			Findings: []Finding{
+			Findings: []types.Finding{
 				{Severity: "high", Title: "Long Issue", Description: longDesc},
 			},
 		}
@@ -379,7 +379,7 @@ func TestStructuredReview_JSONMarshaling(t *testing.T) {
 
 func TestFinding_Structure(t *testing.T) {
 	// Test that Finding struct has expected fields
-	finding := Finding{
+	finding := types.Finding{
 		Severity:    "critical",
 		Title:       "Test Issue",
 		Description: "Test description",

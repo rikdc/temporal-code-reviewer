@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -445,7 +446,7 @@ agents:
 					t.Errorf("Load() error = nil, wantErr %v", tt.wantErr)
 					return
 				}
-				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Load() error = %q, want to contain %q", err.Error(), tt.errContains)
 				}
 				return
@@ -469,7 +470,7 @@ func TestLoadFileNotFound(t *testing.T) {
 	if err == nil {
 		t.Error("Load() with nonexistent file should return error")
 	}
-	if !contains(err.Error(), "read config") {
+	if !strings.Contains(err.Error(), "read config") {
 		t.Errorf("Load() error = %q, want to contain 'read config'", err.Error())
 	}
 }
@@ -552,7 +553,7 @@ func TestValidate(t *testing.T) {
 					t.Errorf("Validate() error = nil, wantErr %v", tt.wantErr)
 					return
 				}
-				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Validate() error = %q, want to contain %q", err.Error(), tt.errContains)
 				}
 			} else if err != nil {
@@ -562,16 +563,3 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && indexOf(s, substr) >= 0))
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}

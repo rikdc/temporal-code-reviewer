@@ -36,8 +36,10 @@ func (a *CreatePRActivity) Execute(ctx context.Context, input types.CreatePRInpu
 		zap.Int("original_pr", input.OriginalPRNum))
 
 	// Idempotency: check for existing open PR from this branch
-	existing, err := a.findExistingPR(ctx, input.RepoOwner, input.RepoName, input.Changeset.BranchName, input.OriginalBranch)
-	if err == nil && existing.PRNumber > 0 {
+	existing, found, err := a.findExistingPR(ctx, input.RepoOwner, input.RepoName, input.Changeset.BranchName, input.OriginalBranch)
+	if err != nil {
+		a.logger.Warn("Failed to check for existing PR", zap.Error(err))
+	} else if found {
 		a.logger.Info("Found existing PR, returning it",
 			zap.Int("pr_number", existing.PRNumber))
 		return existing, nil
@@ -73,24 +75,24 @@ func (a *CreatePRActivity) Execute(ctx context.Context, input types.CreatePRInpu
 	}, nil
 }
 
-func (a *CreatePRActivity) findExistingPR(ctx context.Context, owner, repo, head, base string) (types.CreatePRResult, error) {
+func (a *CreatePRActivity) findExistingPR(ctx context.Context, owner, repo, head, base string) (types.CreatePRResult, bool, error) {
 	prs, _, err := a.client.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{
 		State: "open",
 		Head:  owner + ":" + head,
 		Base:  base,
 	})
 	if err != nil {
-		return types.CreatePRResult{}, err
+		return types.CreatePRResult{}, false, err
 	}
 
 	if len(prs) > 0 {
 		return types.CreatePRResult{
 			PRNumber: prs[0].GetNumber(),
 			PRURL:    prs[0].GetHTMLURL(),
-		}, nil
+		}, true, nil
 	}
 
-	return types.CreatePRResult{}, fmt.Errorf("no existing PR found")
+	return types.CreatePRResult{}, false, nil
 }
 
 func (a *CreatePRActivity) ensureLabel(ctx context.Context, owner, repo, name, color string) {
