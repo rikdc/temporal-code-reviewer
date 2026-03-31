@@ -25,12 +25,12 @@ services:
       postgresql:
         condition: service_healthy
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=temporal
       - POSTGRES_PWD=temporal
       - POSTGRES_SEEDS=postgresql
-      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - SKIP_DYNAMIC_CONFIG_UPDATE=true
     ports:
       - "7233:7233"
     healthcheck:
@@ -62,6 +62,8 @@ services:
         condition: service_healthy
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     ports:
       - "8081:8081"  # Dashboard
       - "8082:8082"  # Webhook

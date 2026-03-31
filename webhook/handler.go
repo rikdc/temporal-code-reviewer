@@ -42,9 +42,16 @@ type Owner struct {
 }
 
 type PullRequest struct {
-	Number  int    `json:"number"`
-	Title   string `json:"title"`
-	DiffURL string `json:"diff_url"`
+	Number  int        `json:"number"`
+	Title   string     `json:"title"`
+	DiffURL string     `json:"diff_url"`
+	Head    BranchRef  `json:"head"`
+	Base    BranchRef  `json:"base"`
+}
+
+type BranchRef struct {
+	Ref string `json:"ref"`
+	SHA string `json:"sha"`
 }
 
 // HandlePR processes PR webhook events
@@ -83,11 +90,14 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare workflow input
 	input := types.PRReviewInput{
-		PRNumber:  payload.PullRequest.Number,
-		RepoOwner: payload.Repository.Owner.Login,
-		RepoName:  payload.Repository.Name,
-		Title:     payload.PullRequest.Title,
-		DiffURL:   payload.PullRequest.DiffURL,
+		PRNumber:   payload.PullRequest.Number,
+		RepoOwner:  payload.Repository.Owner.Login,
+		RepoName:   payload.Repository.Name,
+		Title:      payload.PullRequest.Title,
+		DiffURL:    payload.PullRequest.DiffURL,
+		HeadBranch: payload.PullRequest.Head.Ref,
+		HeadSHA:    payload.PullRequest.Head.SHA,
+		BaseBranch: payload.PullRequest.Base.Ref,
 	}
 
 	// Start Temporal workflow

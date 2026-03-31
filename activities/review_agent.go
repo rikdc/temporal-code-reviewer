@@ -115,11 +115,12 @@ Analyze the code changes and return your findings in JSON format as specified in
 	}
 
 	result := &types.AgentResult{
-		AgentName: a.Name,
-		Status:    mapStatus(review.Status),
-		Findings:  formatFindings(a.Name, review, rawContent),
-		Progress:  100,
-		Timestamp: time.Now(),
+		AgentName:          a.Name,
+		Status:             mapStatus(review.Status),
+		Findings:           formatFindings(a.Name, review, rawContent),
+		StructuredFindings: toTypedFindings(review.Findings),
+		Progress:           100,
+		Timestamp:          time.Now(),
 	}
 
 	// Progress: 100% - Complete
@@ -224,6 +225,22 @@ func formatFindings(agentName string, review *StructuredReview, rawContent strin
 	}
 
 	return findings
+}
+
+// toTypedFindings converts internal Finding structs to types.Finding for downstream use.
+func toTypedFindings(findings []Finding) []types.Finding {
+	out := make([]types.Finding, len(findings))
+	for i, f := range findings {
+		out[i] = types.Finding{
+			Severity:     f.Severity,
+			Title:        f.Title,
+			Description:  f.Description,
+			File:         f.File,
+			Line:         f.Line,
+			SuggestedFix: f.SuggestedFix,
+		}
+	}
+	return out
 }
 
 func lowercaseFirst(s string) string {
