@@ -80,47 +80,34 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 	var applied []types.FixResult
 	var conflicts []types.FixResult
 
-	// Group fixes by file to detect conflicts
-	fileFixCount := make(map[string]int)
-	for _, fix := range successful {
-		for _, f := range fix.FilesChanged {
-			fileFixCount[f]++
-		}
-	}
+	// Track which files already have an applied fix.
+	// If a second fix touches the same file, it's a conflict.
+	appliedFiles := make(map[string]bool)
 
 	for _, fix := range successful {
-		hasConflict := false
+		conflicting := false
 		for _, f := range fix.FilesChanged {
-			if fileFixCount[f] > 1 {
-				hasConflict = true
+			if appliedFiles[f] {
+				conflicting = true
 				break
 			}
 		}
 
-		if hasConflict {
-			alreadyApplied := false
-			for _, prev := range applied {
-				for _, af := range prev.FilesChanged {
-					for _, ff := range fix.FilesChanged {
-						if af == ff {
-							alreadyApplied = true
-						}
-					}
-				}
-			}
-			if alreadyApplied {
-				conflicts = append(conflicts, types.FixResult{
-					FindingID:     fix.FindingID,
-					Success:       false,
-					Diff:          fix.Diff,
-					FilesChanged:  fix.FilesChanged,
-					CommitMsg:     fix.CommitMsg,
-					FailureReason: "conflicting change to same file as another fix",
-				})
-				continue
-			}
+		if conflicting {
+			conflicts = append(conflicts, types.FixResult{
+				FindingID:     fix.FindingID,
+				Success:       false,
+				Diff:          fix.Diff,
+				FilesChanged:  fix.FilesChanged,
+				CommitMsg:     fix.CommitMsg,
+				FailureReason: "conflicting change to same file as another fix",
+			})
+			continue
 		}
 
+		for _, f := range fix.FilesChanged {
+			appliedFiles[f] = true
+		}
 		applied = append(applied, fix)
 	}
 
