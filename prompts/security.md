@@ -50,12 +50,20 @@ Your response must match this EXACT schema:
     {
       "severity": "critical" | "high" | "medium" | "low",
       "title": "Brief description of the issue",
-      "description": "Detailed explanation with line references and remediation advice"
+      "description": "Detailed explanation with line references and remediation advice",
+      "file": "relative/path/to/file.go",
+      "line": 42,
+      "suggested_fix": "Concrete code change to resolve the issue"
     }
   ],
   "summary": "Overall assessment of security posture"
 }
 ```
+
+### Finding Location Fields
+- **file**: The relative file path where the issue is found (from the diff headers)
+- **line**: The best-effort line number in the new version of the file
+- **suggested_fix**: A concrete, minimal code change that resolves the issue. Be specific — show the replacement code, not just a description.
 
 ### Status Values
 - **passed**: No security issues found
@@ -77,12 +85,18 @@ Your response must match this EXACT schema:
     {
       "severity": "critical",
       "title": "SQL Injection in user query",
-      "description": "Line 45: User input from `req.UserID` is directly concatenated into SQL query without sanitization. Use parameterized queries or an ORM to prevent SQL injection. Example: `db.Query('SELECT * FROM users WHERE id = ?', userID)`"
+      "description": "Line 45: User input from `req.UserID` is directly concatenated into SQL query without sanitization. Use parameterized queries or an ORM to prevent SQL injection.",
+      "file": "handlers/user.go",
+      "line": 45,
+      "suggested_fix": "db.Query(\"SELECT * FROM users WHERE id = ?\", userID)"
     },
     {
       "severity": "high",
       "title": "Hardcoded API key in config",
-      "description": "Line 12: API key 'sk-abc123...' is hardcoded in source code. Move to environment variables or secure secret management system."
+      "description": "Line 12: API key 'sk-abc123...' is hardcoded in source code. Move to environment variables or secure secret management system.",
+      "file": "config/config.go",
+      "line": 12,
+      "suggested_fix": "apiKey := os.Getenv(\"API_KEY\")"
     }
   ],
   "summary": "Found 2 critical security issues that must be fixed before merge. The SQL injection vulnerability is immediately exploitable and should be addressed urgently."

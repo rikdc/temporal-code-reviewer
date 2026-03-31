@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/google/go-github/v68/github"
 	"github.com/rikdc/temporal-code-reviewer/activities"
 	"github.com/rikdc/temporal-code-reviewer/config"
 	"github.com/rikdc/temporal-code-reviewer/dashboard"
@@ -56,6 +57,15 @@ func main() {
 		temporalAddress = "localhost:7233"
 	}
 
+	// Get GitHub token and create SDK client
+	githubToken := os.Getenv("GITHUB_TOKEN")
+	var ghClient *github.Client
+	if githubToken != "" {
+		ghClient = github.NewClient(nil).WithAuthToken(githubToken)
+	} else {
+		logger.Warn("GITHUB_TOKEN not set — triage auto-fix features will not work")
+	}
+
 	// Connect to Temporal
 	logger.Info("Connecting to Temporal", zap.String("address", temporalAddress))
 	temporalClient, err := client.Dial(client.Options{
@@ -72,11 +82,12 @@ func main() {
 		MaxConcurrentActivityExecutionSize: 10,
 	})
 
-	// Register workflow
+	// Register workflows
 	w.RegisterWorkflow(workflows.PRReviewWorkflow)
+	w.RegisterWorkflow(workflows.FixFindingWorkflow)
 
 	// Create diff fetcher activity
-	diffFetcher := activities.NewDiffFetcher(logger)
+	diffFetcher := activities.NewDiffFetcher(logger, ghClient)
 	w.RegisterActivityWithOptions(
 		diffFetcher.FetchDiff,
 		activity.RegisterOptions{Name: activities.ActivityDiffFetcher},
@@ -102,6 +113,45 @@ func main() {
 	w.RegisterActivityWithOptions(
 		(&activities.SynthesisAgent{EventBus: eventBus, Logger: logger}).Execute,
 		activity.RegisterOptions{Name: activities.ActivitySynthesis},
+	)
+
+	// Register triage agent
+	triageAgent := activities.NewTriageAgent(eventBus, logger, llmClient, &cfg.Agents.Triage, promptLoader)
+	w.RegisterActivityWithOptions(
+		triageAgent.Execute,
+		activity.RegisterOptions{Name: activities.ActivityTriage},
+	)
+
+	// Register GitHub activity
+	githubActivity := activities.NewGitHubActivity(ghClient, logger)
+	w.RegisterActivityWithOptions(
+		githubActivity.GetPRHeadSHA,
+		activity.RegisterOptions{Name: activities.ActivityGetPRHeadSHA},
+	)
+	w.RegisterActivityWithOptions(
+		githubActivity.ReadFile,
+		activity.RegisterOptions{Name: activities.ActivityReadFile},
+	)
+
+	// Register fix generator
+	fixGenerator := activities.NewFixGeneratorActivity(llmClient, &cfg.Agents.FixGenerator, logger)
+	w.RegisterActivityWithOptions(
+		fixGenerator.Execute,
+		activity.RegisterOptions{Name: activities.ActivityGenerateFix},
+	)
+
+	// Register coalesce activity
+	coalesceActivity := activities.NewCoalesceActivity(ghClient, logger)
+	w.RegisterActivityWithOptions(
+		coalesceActivity.Execute,
+		activity.RegisterOptions{Name: activities.ActivityCoalesce},
+	)
+
+	// Register PR creation activity
+	createPRActivity := activities.NewCreatePRActivity(ghClient, logger)
+	w.RegisterActivityWithOptions(
+		createPRActivity.Execute,
+		activity.RegisterOptions{Name: activities.ActivityCreatePR},
 	)
 
 	// Start worker in background

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -41,7 +42,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr: false,
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.OpenRouter.APIKey != "test-key-123" {
@@ -84,7 +95,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			envKey:  "env-key-456",
 			wantErr: false,
 			validate: func(t *testing.T, cfg *Config) {
@@ -119,7 +140,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "api_key required",
 		},
@@ -149,7 +180,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "base_url required",
 		},
@@ -179,7 +220,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "timeout must be positive",
 		},
@@ -209,7 +260,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "security.model required",
 		},
@@ -239,7 +300,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "temperature must be between 0 and 1",
 		},
@@ -269,7 +340,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "max_tokens must be positive",
 		},
@@ -299,7 +380,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "prompt_file required",
 		},
@@ -355,7 +446,7 @@ agents:
 					t.Errorf("Load() error = nil, wantErr %v", tt.wantErr)
 					return
 				}
-				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Load() error = %q, want to contain %q", err.Error(), tt.errContains)
 				}
 				return
@@ -379,7 +470,7 @@ func TestLoadFileNotFound(t *testing.T) {
 	if err == nil {
 		t.Error("Load() with nonexistent file should return error")
 	}
-	if !contains(err.Error(), "read config") {
+	if !strings.Contains(err.Error(), "read config") {
 		t.Errorf("Load() error = %q, want to contain 'read config'", err.Error())
 	}
 }
@@ -424,6 +515,18 @@ func TestValidate(t *testing.T) {
 						Temperature: 0.5,
 						PromptFile:  "prompts/documentation.md",
 					},
+					Triage: AgentConfig{
+						Model:       "anthropic/claude-sonnet-4",
+						MaxTokens:   2000,
+						Temperature: 0.2,
+						PromptFile:  "prompts/triage.md",
+					},
+					FixGenerator: AgentConfig{
+						Model:       "anthropic/claude-haiku-4-5",
+						MaxTokens:   2000,
+						Temperature: 0.1,
+						PromptFile:  "",
+					},
 				},
 			},
 			wantErr: false,
@@ -450,7 +553,7 @@ func TestValidate(t *testing.T) {
 					t.Errorf("Validate() error = nil, wantErr %v", tt.wantErr)
 					return
 				}
-				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("Validate() error = %q, want to contain %q", err.Error(), tt.errContains)
 				}
 			} else if err != nil {
@@ -460,16 +563,3 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && indexOf(s, substr) >= 0))
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}

@@ -1,5 +1,5 @@
 # Multi-stage build for Lyon service
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git
@@ -27,9 +27,11 @@ WORKDIR /root/
 # Copy binary from builder
 COPY --from=builder /app/lyon .
 
-# Copy templates and static files
+# Copy config, templates, static files, and prompts
+COPY --from=builder /app/config.yaml .
 COPY --from=builder /app/dashboard/templates ./dashboard/templates
 COPY --from=builder /app/dashboard/static ./dashboard/static
+COPY --from=builder /app/prompts ./prompts
 
 # Expose ports
 EXPOSE 8081 8082

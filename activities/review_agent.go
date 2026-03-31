@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rikdc/temporal-code-reviewer/config"
@@ -115,11 +116,12 @@ Analyze the code changes and return your findings in JSON format as specified in
 	}
 
 	result := &types.AgentResult{
-		AgentName: a.Name,
-		Status:    mapStatus(review.Status),
-		Findings:  formatFindings(a.Name, review, rawContent),
-		Progress:  100,
-		Timestamp: time.Now(),
+		AgentName:          a.Name,
+		Status:             mapStatus(review.Status),
+		Findings:           formatFindings(a.Name, review, rawContent),
+		StructuredFindings: review.Findings,
+		Progress:           100,
+		Timestamp:          time.Now(),
 	}
 
 	// Progress: 100% - Complete
@@ -230,5 +232,5 @@ func lowercaseFirst(s string) string {
 	if s == "" {
 		return s
 	}
-	return string(s[0]|0x20) + s[1:]
+	return strings.ToLower(s[:1]) + s[1:]
 }

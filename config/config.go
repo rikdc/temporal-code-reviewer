@@ -26,6 +26,8 @@ type AgentConfigs struct {
 	Style         AgentConfig `yaml:"style"`
 	Logic         AgentConfig `yaml:"logic"`
 	Documentation AgentConfig `yaml:"documentation"`
+	Triage        AgentConfig `yaml:"triage"`
+	FixGenerator  AgentConfig `yaml:"fix_generator"`
 }
 
 // AgentConfig holds configuration for a single agent
@@ -79,6 +81,8 @@ func (c *Config) Validate() error {
 		"style":         c.Agents.Style,
 		"logic":         c.Agents.Logic,
 		"documentation": c.Agents.Documentation,
+		"triage":        c.Agents.Triage,
+		"fix_generator": c.Agents.FixGenerator,
 	}
 
 	for name, agent := range agents {
@@ -88,6 +92,11 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// agentsWithoutPromptFile lists agents that use a hardcoded system prompt rather than a file.
+var agentsWithoutPromptFile = map[string]bool{
+	"fix_generator": true,
 }
 
 func validateAgent(name string, agent AgentConfig) error {
@@ -100,7 +109,7 @@ func validateAgent(name string, agent AgentConfig) error {
 	if agent.Temperature < 0 || agent.Temperature > 1 {
 		return fmt.Errorf("agents.%s.temperature must be between 0 and 1", name)
 	}
-	if agent.PromptFile == "" {
+	if agent.PromptFile == "" && !agentsWithoutPromptFile[name] {
 		return fmt.Errorf("agents.%s.prompt_file required", name)
 	}
 	return nil

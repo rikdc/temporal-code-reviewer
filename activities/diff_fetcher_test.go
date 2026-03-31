@@ -13,7 +13,7 @@ import (
 
 func TestNewDiffFetcher(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	if fetcher == nil {
 		t.Fatal("NewDiffFetcher() returned nil")
@@ -27,6 +27,9 @@ func TestNewDiffFetcher(t *testing.T) {
 	if fetcher.logger == nil {
 		t.Error("NewDiffFetcher() logger is nil")
 	}
+	if fetcher.ghClient != nil {
+		t.Error("NewDiffFetcher(nil) ghClient should be nil")
+	}
 	if fetcher.httpClient.Timeout != DiffFetchTimeout {
 		t.Errorf("NewDiffFetcher() timeout = %v, want %v", fetcher.httpClient.Timeout, DiffFetchTimeout)
 	}
@@ -34,7 +37,7 @@ func TestNewDiffFetcher(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_Success(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	// Create test server
 	diffContent := `diff --git a/file.go b/file.go
@@ -71,7 +74,7 @@ index 1234567..abcdefg 100644
 
 func TestDiffFetcher_FetchDiff_CacheHit(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	diffContent := "test diff content"
 	requestCount := 0
@@ -112,7 +115,7 @@ func TestDiffFetcher_FetchDiff_CacheHit(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_TruncateByLines(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	// Create diff with >1000 lines
 	var lines []string
@@ -146,7 +149,7 @@ func TestDiffFetcher_FetchDiff_TruncateByLines(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_TruncateByChars(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	// Create diff with >50k characters but <1000 lines
 	// Each line is about 100 chars, so 800 lines * 100 = 80k chars
@@ -184,7 +187,7 @@ func TestDiffFetcher_FetchDiff_TruncateByChars(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_SizeLimit(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	// Create diff exactly at size limit (10MB)
 	// Note: LimitReader will cap it, so we just verify it doesn't error
@@ -215,7 +218,7 @@ func TestDiffFetcher_FetchDiff_SizeLimit(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_HTTPError_404(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -235,7 +238,7 @@ func TestDiffFetcher_FetchDiff_HTTPError_404(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_HTTPError_500(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -255,7 +258,7 @@ func TestDiffFetcher_FetchDiff_HTTPError_500(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_Timeout(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	// Create server with delay
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +283,7 @@ func TestDiffFetcher_FetchDiff_Timeout(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_InvalidURL(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	ctx := context.Background()
 	_, err := fetcher.FetchDiff(ctx, "http://nonexistent-domain-12345.invalid")
@@ -291,7 +294,7 @@ func TestDiffFetcher_FetchDiff_InvalidURL(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_EmptyDiff(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -405,7 +408,7 @@ func TestCountLines(t *testing.T) {
 
 func TestDiffFetcher_FetchDiff_MultipleURLs(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	fetcher := NewDiffFetcher(logger)
+	fetcher := NewDiffFetcher(logger, nil)
 
 	// Test caching works correctly for different URLs
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

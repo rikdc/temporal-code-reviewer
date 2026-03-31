@@ -52,12 +52,20 @@ Your response must match this EXACT schema:
     {
       "severity": "critical" | "high" | "medium" | "low",
       "title": "Brief description of the style issue",
-      "description": "Detailed explanation with line references and suggested improvements"
+      "description": "Detailed explanation with line references and suggested improvements",
+      "file": "relative/path/to/file.go",
+      "line": 42,
+      "suggested_fix": "Concrete code change to resolve the issue"
     }
   ],
   "summary": "Overall assessment of code style quality"
 }
 ```
+
+### Finding Location Fields
+- **file**: The relative file path where the issue is found (from the diff headers)
+- **line**: The best-effort line number in the new version of the file
+- **suggested_fix**: A concrete, minimal code change that resolves the issue. Be specific — show the replacement code, not just a description.
 
 ### Status Values
 - **passed**: Code follows Go style conventions
@@ -79,17 +87,26 @@ Your response must match this EXACT schema:
     {
       "severity": "high",
       "title": "Missing godoc for exported function",
-      "description": "Line 23: Exported function `ProcessPayment` lacks godoc comment. Add: '// ProcessPayment validates and processes a customer payment transaction.'"
+      "description": "Line 23: Exported function `ProcessPayment` lacks godoc comment.",
+      "file": "payments/handler.go",
+      "line": 23,
+      "suggested_fix": "// ProcessPayment validates and processes a customer payment transaction.\nfunc ProcessPayment(..."
     },
     {
       "severity": "medium",
       "title": "Function too long",
-      "description": "Lines 45-120: Function `HandleRequest` is 75 lines long. Consider extracting validation logic (lines 50-70) into `validateRequest()` helper function."
+      "description": "Lines 45-120: Function `HandleRequest` is 75 lines long. Consider extracting validation logic (lines 50-70) into `validateRequest()` helper function.",
+      "file": "handlers/request.go",
+      "line": 45,
+      "suggested_fix": "Extract lines 50-70 into: func validateRequest(req *Request) error { ... }"
     },
     {
       "severity": "low",
       "title": "Magic number should be constant",
-      "description": "Line 89: Hardcoded value `86400` should be named constant: `const SecondsPerDay = 86400`"
+      "description": "Line 89: Hardcoded value `86400` should be named constant.",
+      "file": "utils/time.go",
+      "line": 89,
+      "suggested_fix": "const SecondsPerDay = 86400"
     }
   ],
   "summary": "Code is generally well-structured but needs godoc comments for exported functions and could benefit from extracting complex logic into smaller functions."

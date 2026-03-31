@@ -65,12 +65,20 @@ Your response must match this EXACT schema:
     {
       "severity": "critical" | "high" | "medium" | "low",
       "title": "Brief description of the logic issue",
-      "description": "Detailed explanation with line references and suggested fix"
+      "description": "Detailed explanation with line references and suggested fix",
+      "file": "relative/path/to/file.go",
+      "line": 42,
+      "suggested_fix": "Concrete code change to resolve the issue"
     }
   ],
   "summary": "Overall assessment of code correctness"
 }
 ```
+
+### Finding Location Fields
+- **file**: The relative file path where the issue is found (from the diff headers)
+- **line**: The best-effort line number in the new version of the file
+- **suggested_fix**: A concrete, minimal code change that resolves the issue. Be specific — show the replacement code, not just a description.
 
 ### Status Values
 - **passed**: No logic errors or significant concerns found
@@ -92,22 +100,34 @@ Your response must match this EXACT schema:
     {
       "severity": "critical",
       "title": "Nil pointer dereference in error path",
-      "description": "Line 67: When `fetchUser()` returns an error, `user` is nil but still accessed at line 69 (`user.ID`). Add nil check: `if user == nil { return err }` before accessing user fields."
+      "description": "Line 67: When `fetchUser()` returns an error, `user` is nil but still accessed at line 69 (`user.ID`).",
+      "file": "handlers/user.go",
+      "line": 67,
+      "suggested_fix": "if user == nil { return err }"
     },
     {
       "severity": "high",
       "title": "Race condition in concurrent map access",
-      "description": "Lines 120-125: Multiple goroutines read and write to `cache` map without synchronization. Use `sync.RWMutex` or `sync.Map` to protect concurrent access."
+      "description": "Lines 120-125: Multiple goroutines read and write to `cache` map without synchronization.",
+      "file": "cache/store.go",
+      "line": 120,
+      "suggested_fix": "var mu sync.RWMutex // protect cache map access"
     },
     {
       "severity": "medium",
       "title": "Missing boundary check in slice access",
-      "description": "Line 45: Accessing `items[0]` without checking if slice is empty. Add check: `if len(items) == 0 { return ErrNoItems }`"
+      "description": "Line 45: Accessing `items[0]` without checking if slice is empty.",
+      "file": "service/items.go",
+      "line": 45,
+      "suggested_fix": "if len(items) == 0 { return ErrNoItems }"
     },
     {
       "severity": "low",
       "title": "Inefficient string concatenation in loop",
-      "description": "Lines 90-95: Using `+=` for string concatenation in loop is O(n²). Use `strings.Builder` for O(n) performance."
+      "description": "Lines 90-95: Using `+=` for string concatenation in loop is O(n²).",
+      "file": "utils/format.go",
+      "line": 90,
+      "suggested_fix": "var b strings.Builder\nfor _, s := range items {\n    b.WriteString(s)\n}"
     }
   ],
   "summary": "Found critical nil dereference and race condition that will cause runtime panics. Must be fixed before merge. Also identified boundary check and performance improvements."
