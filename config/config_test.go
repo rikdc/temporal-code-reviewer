@@ -41,7 +41,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr: false,
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.OpenRouter.APIKey != "test-key-123" {
@@ -84,7 +94,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			envKey:  "env-key-456",
 			wantErr: false,
 			validate: func(t *testing.T, cfg *Config) {
@@ -119,7 +139,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "api_key required",
 		},
@@ -149,7 +179,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "base_url required",
 		},
@@ -179,7 +219,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "timeout must be positive",
 		},
@@ -209,7 +259,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "security.model required",
 		},
@@ -239,7 +299,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "temperature must be between 0 and 1",
 		},
@@ -269,7 +339,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "max_tokens must be positive",
 		},
@@ -299,7 +379,17 @@ agents:
     model: "anthropic/claude-3.5-haiku"
     max_tokens: 1500
     temperature: 0.5
-    prompt_file: "documentation.md"`,
+    prompt_file: "documentation.md"
+  triage:
+    model: "anthropic/claude-sonnet-4"
+    max_tokens: 2000
+    temperature: 0.2
+    prompt_file: "triage.md"
+  fix_generator:
+    model: "anthropic/claude-haiku-4-5"
+    max_tokens: 2000
+    temperature: 0.1
+    prompt_file: ""`,
 			wantErr:     true,
 			errContains: "prompt_file required",
 		},
@@ -423,6 +513,18 @@ func TestValidate(t *testing.T) {
 						MaxTokens:   1500,
 						Temperature: 0.5,
 						PromptFile:  "prompts/documentation.md",
+					},
+					Triage: AgentConfig{
+						Model:       "anthropic/claude-sonnet-4",
+						MaxTokens:   2000,
+						Temperature: 0.2,
+						PromptFile:  "prompts/triage.md",
+					},
+					FixGenerator: AgentConfig{
+						Model:       "anthropic/claude-haiku-4-5",
+						MaxTokens:   2000,
+						Temperature: 0.1,
+						PromptFile:  "",
 					},
 				},
 			},

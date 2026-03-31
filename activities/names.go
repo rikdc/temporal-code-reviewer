@@ -8,4 +8,10 @@ const (
 	ActivityLogic       = "LogicAgent.Execute"
 	ActivityDocs        = "DocsAgent.Execute"
 	ActivitySynthesis   = "SynthesisAgent.Execute"
+	ActivityTriage      = "TriageAgent.Execute"
+	ActivityGetPRHeadSHA = "GitHubActivity.GetPRHeadSHA"
+	ActivityReadFile     = "GitHubActivity.ReadFile"
+	ActivityGenerateFix = "FixGeneratorActivity.Execute"
+	ActivityCoalesce    = "CoalesceActivity.Execute"
+	ActivityCreatePR    = "CreatePRActivity.Execute"
 )

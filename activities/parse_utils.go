@@ -14,9 +14,12 @@ type StructuredReview struct {
 
 // Finding represents a single review finding
 type Finding struct {
-	Severity    string `json:"severity"`    // "critical", "high", "medium", "low"
-	Title       string `json:"title"`       // Brief description
-	Description string `json:"description"` // Detailed explanation
+	Severity     string `json:"severity"`               // "critical", "high", "medium", "low"
+	Title        string `json:"title"`                   // Brief description
+	Description  string `json:"description"`             // Detailed explanation
+	File         string `json:"file,omitempty"`          // relative file path
+	Line         int    `json:"line,omitempty"`           // best-effort line number
+	SuggestedFix string `json:"suggested_fix,omitempty"` // review agent's proposed fix
 }
 
 // extractJSON removes markdown code blocks and other common wrappers
