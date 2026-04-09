@@ -3,6 +3,27 @@ openrouter:
   base_url: "https://openrouter.ai/api/v1"
   timeout: 120
 
+auto_fix_users: []
+# auto_fix_users:
+#   - your-github-login
+
+temporal:
+  namespace: "code-reviewer"  # use a dedicated namespace locally to reduce UI clutter
+
+poller:
+  enabled: false
+  interval_seconds: 900  # 15 minutes
+  repos: []
+  # repos:
+  #   - owner/repo-name
+  filters:
+    max_age_days: 5         # skip PRs older than this; 0 = no limit
+    skip_drafts: true       # skip draft PRs
+    skip_bots: true         # skip PRs authored by GitHub bot accounts (e.g. dependabot)
+    require_reviewer_logins: []
+    # require_reviewer_logins:
+    #   - your-github-login  # only review PRs where you are a requested reviewer
+
 agents:
   security:
     model: "anthropic/claude-sonnet-4"

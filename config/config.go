@@ -9,8 +9,40 @@ import (
 
 // Config represents the complete application configuration
 type Config struct {
-	OpenRouter OpenRouterConfig `yaml:"openrouter"`
-	Agents     AgentConfigs     `yaml:"agents"`
+	OpenRouter   OpenRouterConfig `yaml:"openrouter"`
+	Temporal     TemporalConfig   `yaml:"temporal"`
+	Agents       AgentConfigs     `yaml:"agents"`
+	Poller       PollerConfig     `yaml:"poller"`
+	AutoFixUsers []string         `yaml:"auto_fix_users"` // GitHub logins that receive auto-fix PRs
+}
+
+// TemporalConfig holds Temporal server connection settings.
+type TemporalConfig struct {
+	// Namespace to use for all workflows. Defaults to "default" if empty.
+	// For local dev, use a dedicated namespace (e.g. "code-reviewer") to reduce
+	// clutter in the Temporal UI.
+	Namespace string `yaml:"namespace"`
+}
+
+// PollerConfig holds configuration for the GitHub PR polling background process
+type PollerConfig struct {
+	Enabled  bool      `yaml:"enabled"`
+	Interval int       `yaml:"interval_seconds"` // how often to poll, in seconds
+	Repos    []string  `yaml:"repos"`            // list of "owner/repo" strings to watch
+	Filters  PRFilters `yaml:"filters"`
+}
+
+// PRFilters controls which PRs the poller will submit for review.
+type PRFilters struct {
+	// MaxAgeDays skips PRs created more than this many days ago. 0 = no limit.
+	MaxAgeDays int `yaml:"max_age_days"`
+	// SkipDrafts skips PRs that are marked as drafts.
+	SkipDrafts bool `yaml:"skip_drafts"`
+	// SkipBots skips PRs authored by GitHub bot accounts (e.g. dependabot).
+	SkipBots bool `yaml:"skip_bots"`
+	// RequireReviewerLogins, when non-empty, only allows PRs where at least one
+	// of the listed logins is a requested reviewer on the PR.
+	RequireReviewerLogins []string `yaml:"require_reviewer_logins"`
 }
 
 // OpenRouterConfig holds OpenRouter API configuration

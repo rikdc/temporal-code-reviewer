@@ -44,6 +44,17 @@ Analyze the provided code diff for documentation quality, focusing on:
 - **Architecture decisions**: Missing ADRs or design rationale
 - **Migration guides**: Breaking changes without upgrade path
 
+## Do NOT Report
+
+- Observations about what the diff does or how it works
+- Summaries of changes ("this adds a new method", "these are updated tests")
+- Suggestions for documentation that would be purely nice-to-have
+- Documentation gaps in code not touched by this diff
+- Findings where you cannot provide the exact documentation text that is missing
+- Comments on internal/unexported symbols unless the logic is genuinely complex
+
+If you have no actionable findings, return an empty findings array and status "passed".
+
 ## Review Guidelines
 
 1. **Focus on public API**: Exported items are highest priority
@@ -64,11 +75,11 @@ Your response must match this EXACT schema:
   "findings": [
     {
       "severity": "critical" | "high" | "medium" | "low",
-      "title": "Brief description of the documentation issue",
-      "description": "Detailed explanation with line references and suggested improvements",
+      "title": "Brief title for the issue (one sentence, no period)",
+      "description": "Do NOT describe what the diff does or summarize the change. Explain specifically what documentation is missing and what confusion or mistake it would prevent. Think about the developer calling this for the first time — what would they get wrong without this comment? Write plainly: no em-dashes, no 'it's worth noting', no 'leverage', no 'ensure', no 'utilize'. Use commas and short sentences instead.",
       "file": "relative/path/to/file.go",
       "line": 42,
-      "suggested_fix": "Concrete documentation text to add or change"
+      "suggested_fix": "The concrete documentation text to add — for godoc comments, the full comment. No markdown backtick fences around the code examples in comments."
     }
   ],
   "summary": "Overall assessment of documentation quality"
@@ -78,7 +89,7 @@ Your response must match this EXACT schema:
 ### Finding Location Fields
 - **file**: The relative file path where the issue is found (from the diff headers)
 - **line**: The best-effort line number in the new version of the file
-- **suggested_fix**: The concrete documentation text to add or change. For godoc comments, include the full comment line.
+- **suggested_fix**: The concrete documentation text to add or change. For godoc comments, include the full comment. No markdown backtick fences around inline code examples.
 
 ### Status Values
 - **passed**: Documentation is complete and clear
@@ -86,10 +97,9 @@ Your response must match this EXACT schema:
 - **failed**: Significant documentation missing for public API
 
 ### Severity Levels
-- **critical**: Exported API completely undocumented (exported functions, types without godoc)
-- **high**: Important missing documentation (complex functions, key parameters, error conditions)
-- **medium**: Documentation improvements (clarity, completeness, examples)
-- **low**: Minor enhancements (formatting, typos, additional context)
+- **critical**: Exported API completely undocumented where the contract, errors, or behaviour are non-obvious
+- **high**: Missing documentation that would cause a caller to use the function incorrectly
+- **medium**: Missing documentation with a concrete, specific text you can provide that prevents real confusion
 
 ## Example Output
 
@@ -141,3 +151,5 @@ Your response must match this EXACT schema:
 - Suggest specific documentation text when possible
 - Balance thoroughness with pragmatism
 - Focus on what helps users and maintainers
+- Only include findings where you can provide the exact missing text
+- If uncertain, omit the finding

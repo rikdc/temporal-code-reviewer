@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -13,10 +14,12 @@ import (
 	"github.com/rikdc/temporal-code-reviewer/dashboard"
 	"github.com/rikdc/temporal-code-reviewer/events"
 	"github.com/rikdc/temporal-code-reviewer/llm"
+	"github.com/rikdc/temporal-code-reviewer/types"
 	"github.com/rikdc/temporal-code-reviewer/webhook"
 	"github.com/rikdc/temporal-code-reviewer/workflows"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
 )
@@ -67,9 +70,16 @@ func main() {
 	}
 
 	// Connect to Temporal
-	logger.Info("Connecting to Temporal", zap.String("address", temporalAddress))
+	temporalNamespace := cfg.Temporal.Namespace
+	if temporalNamespace == "" {
+		temporalNamespace = "default"
+	}
+	logger.Info("Connecting to Temporal",
+		zap.String("address", temporalAddress),
+		zap.String("namespace", temporalNamespace))
 	temporalClient, err := client.Dial(client.Options{
-		HostPort: temporalAddress,
+		HostPort:  temporalAddress,
+		Namespace: temporalNamespace,
 	})
 	if err != nil {
 		logger.Fatal("Failed to connect to Temporal", zap.Error(err))
@@ -85,6 +95,7 @@ func main() {
 	// Register workflows
 	w.RegisterWorkflow(workflows.PRReviewWorkflow)
 	w.RegisterWorkflow(workflows.FixFindingWorkflow)
+	w.RegisterWorkflow(workflows.PollPRsWorkflow)
 
 	// Create diff fetcher activity
 	diffFetcher := activities.NewDiffFetcher(logger, ghClient)
@@ -154,6 +165,24 @@ func main() {
 		activity.RegisterOptions{Name: activities.ActivityCreatePR},
 	)
 
+	// Register list PRs activity (used by the polling workflow)
+	listPRsActivity := activities.NewListPRsActivity(ghClient, logger, cfg.Poller.Filters)
+	w.RegisterActivityWithOptions(
+		listPRsActivity.ListOpenPRs,
+		activity.RegisterOptions{Name: activities.ActivityListOpenPRs},
+	)
+
+	// Register post review activity
+	postReviewActivity := activities.NewPostReviewActivity(ghClient, logger)
+	w.RegisterActivityWithOptions(
+		postReviewActivity.PostReview,
+		activity.RegisterOptions{Name: activities.ActivityPostReview},
+	)
+	w.RegisterActivityWithOptions(
+		postReviewActivity.HasPendingReview,
+		activity.RegisterOptions{Name: activities.ActivityHasPendingReview},
+	)
+
 	// Start worker in background
 	logger.Info("Starting Temporal worker")
 	go func() {
@@ -171,9 +200,18 @@ func main() {
 		}
 	}()
 
+	// Upsert Temporal Schedule for GitHub polling (if enabled)
+	if cfg.Poller.Enabled {
+		if ghClient == nil {
+			logger.Warn("Poller enabled but GITHUB_TOKEN not set — skipping schedule creation")
+		} else {
+			upsertPollerSchedule(context.Background(), temporalClient, cfg, logger)
+		}
+	}
+
 	// Start webhook server
 	logger.Info("Starting webhook server on :8082")
-	webhookHandler := webhook.NewHandler(temporalClient, logger)
+	webhookHandler := webhook.NewHandler(temporalClient, logger, cfg.AutoFixUsers)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook/pr", webhookHandler.HandlePR)
@@ -208,4 +246,72 @@ func main() {
 	}
 
 	logger.Info("Service stopped")
+}
+
+// upsertPollerSchedule creates or updates the Temporal Schedule that drives
+// GitHub PR polling. It is idempotent — safe to call on every startup.
+//
+// The schedule runs every 15 minutes during business hours only:
+// Monday–Friday, 08:00–17:45 America/New_York (last fire at 17:45, done by 18:00).
+func upsertPollerSchedule(ctx context.Context, temporalClient client.Client, cfg *config.Config, logger *zap.Logger) {
+	const scheduleID = "poll-github-prs"
+
+	pollInput := types.PollPRsInput{
+		Repos:        cfg.Poller.Repos,
+		AutoFixUsers: cfg.AutoFixUsers,
+	}
+
+	// Every 15 min, Mon–Fri, 08:00–17:59 ET.
+	spec := client.ScheduleSpec{
+		Calendars: []client.ScheduleCalendarSpec{
+			{
+				Minute:    []client.ScheduleRange{{Start: 0, End: 59, Step: 15}},
+				Hour:      []client.ScheduleRange{{Start: 8, End: 17}},
+				DayOfWeek: []client.ScheduleRange{{Start: 1, End: 5}}, // Mon=1, Fri=5
+			},
+		},
+		TimeZoneName: "America/New_York",
+	}
+	action := &client.ScheduleWorkflowAction{
+		Workflow:  workflows.PollPRsWorkflow,
+		TaskQueue: "pr-review-queue",
+		Args:      []interface{}{pollInput},
+	}
+
+	scheduleClient := temporalClient.ScheduleClient()
+
+	// Try to update an existing schedule first.
+	handle := scheduleClient.GetHandle(ctx, scheduleID)
+	err := handle.Update(ctx, client.ScheduleUpdateOptions{
+		DoUpdate: func(input client.ScheduleUpdateInput) (*client.ScheduleUpdate, error) {
+			input.Description.Schedule.Spec = &spec
+			input.Description.Schedule.Action = action
+			input.Description.Schedule.Policy = &client.SchedulePolicies{
+				Overlap: enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
+			}
+			return &client.ScheduleUpdate{Schedule: &input.Description.Schedule}, nil
+		},
+	})
+	if err == nil {
+		logger.Info("Updated existing poller schedule",
+			zap.String("schedule_id", scheduleID),
+			zap.Strings("repos", cfg.Poller.Repos))
+		return
+	}
+
+	// Schedule doesn't exist yet — create it.
+	_, err = scheduleClient.Create(ctx, client.ScheduleOptions{
+		ID:      scheduleID,
+		Spec:    spec,
+		Action:  action,
+		Overlap: enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
+	})
+	if err != nil {
+		logger.Error("Failed to create poller schedule", zap.Error(err))
+		return
+	}
+
+	logger.Info("Created poller schedule",
+		zap.String("schedule_id", scheduleID),
+		zap.Strings("repos", cfg.Poller.Repos))
 }

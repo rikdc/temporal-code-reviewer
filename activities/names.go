@@ -14,4 +14,7 @@ const (
 	ActivityGenerateFix = "FixGeneratorActivity.Execute"
 	ActivityCoalesce    = "CoalesceActivity.Execute"
 	ActivityCreatePR    = "CreatePRActivity.Execute"
+	ActivityListOpenPRs      = "ListPRsActivity.ListOpenPRs"
+	ActivityPostReview       = "PostReviewActivity.PostReview"
+	ActivityHasPendingReview = "PostReviewActivity.HasPendingReview"
 )

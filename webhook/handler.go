@@ -15,13 +15,19 @@ import (
 type Handler struct {
 	temporalClient client.Client
 	logger         *zap.Logger
+	autoFixUsers   map[string]bool // GitHub logins that receive auto-fix PRs
 }
 
 // NewHandler creates a new webhook handler
-func NewHandler(temporalClient client.Client, logger *zap.Logger) *Handler {
+func NewHandler(temporalClient client.Client, logger *zap.Logger, autoFixUsers []string) *Handler {
+	allowed := make(map[string]bool, len(autoFixUsers))
+	for _, u := range autoFixUsers {
+		allowed[u] = true
+	}
 	return &Handler{
 		temporalClient: temporalClient,
 		logger:         logger,
+		autoFixUsers:   allowed,
 	}
 }
 
@@ -31,6 +37,11 @@ type GitHubPRPayload struct {
 	Number      int         `json:"number"`
 	Repository  Repository  `json:"repository"`
 	PullRequest PullRequest `json:"pull_request"`
+	Sender      Sender      `json:"sender"`
+}
+
+type Sender struct {
+	Login string `json:"login"`
 }
 
 type Repository struct {
@@ -79,8 +90,8 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate workflow ID
-	workflowID := fmt.Sprintf("pr-review-%s-%s-%d",
+	// Generate workflow ID — source prefix makes it easy to identify in the Temporal UI
+	workflowID := fmt.Sprintf("pr-review/webhook/%s/%s/%d",
 		payload.Repository.Owner.Login,
 		payload.Repository.Name,
 		payload.PullRequest.Number)
@@ -91,14 +102,16 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare workflow input
 	input := types.PRReviewInput{
-		PRNumber:   payload.PullRequest.Number,
-		RepoOwner:  payload.Repository.Owner.Login,
-		RepoName:   payload.Repository.Name,
-		Title:      payload.PullRequest.Title,
-		DiffURL:    payload.PullRequest.DiffURL,
-		HeadBranch: payload.PullRequest.Head.Ref,
-		HeadSHA:    payload.PullRequest.Head.SHA,
-		BaseBranch: payload.PullRequest.Base.Ref,
+		PRNumber:       payload.PullRequest.Number,
+		RepoOwner:      payload.Repository.Owner.Login,
+		RepoName:       payload.Repository.Name,
+		Title:          payload.PullRequest.Title,
+		DiffURL:        payload.PullRequest.DiffURL,
+		HeadBranch:     payload.PullRequest.Head.Ref,
+		HeadSHA:        payload.PullRequest.Head.SHA,
+		BaseBranch:     payload.PullRequest.Base.Ref,
+		PRAuthor:       payload.Sender.Login,
+		AutoFixEnabled: h.autoFixUsers[payload.Sender.Login],
 	}
 
 	// Start Temporal workflow

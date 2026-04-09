@@ -12,6 +12,12 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+// Search attribute keys used for filtering PR review workflows in the Temporal UI.
+var (
+	searchAttrRepository = temporal.NewSearchAttributeKeyString("Repository")
+	searchAttrPRAuthor   = temporal.NewSearchAttributeKeyString("PRAuthor")
+)
+
 var (
 	findingSeverityRe = regexp.MustCompile(`\*\*\[(\w+)\]\s+(.+?)\*\*`)
 	nonAlphanumRe     = regexp.MustCompile(`[^a-zA-Z0-9-]`)
@@ -21,6 +27,17 @@ var (
 func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.PRReviewResult, error) {
 	logger := workflow.GetLogger(ctx)
 	logger.Info("PR review workflow started", "pr_number", input.PRNumber)
+
+	// Tag each execution with repo and author for easy filtering in the Temporal UI.
+	// These custom attributes must be registered in the namespace before use:
+	//   temporal operator search-attribute create --namespace code-reviewer \
+	//     --name Repository --type Text
+	//   temporal operator search-attribute create --namespace code-reviewer \
+	//     --name PRAuthor --type Text
+	_ = workflow.UpsertTypedSearchAttributes(ctx,
+		searchAttrRepository.ValueSet(fmt.Sprintf("%s/%s", input.RepoOwner, input.RepoName)),
+		searchAttrPRAuthor.ValueSet(input.PRAuthor),
+	)
 
 	// Configure activity options with 90s timeout for LLM calls
 	ao := workflow.ActivityOptions{
@@ -134,6 +151,27 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		"pr_number", input.PRNumber,
 		"overall_status", summary.OverallStatus)
 
+	// Phase 3: Post draft GitHub review — non-fatal, workflow continues on failure.
+	// MaximumAttempts:1 prevents double-posting if the workflow is retried.
+	postReviewOpts := workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	}
+	postReviewInput := types.PostReviewInput{
+		PRReviewInput: input,
+		AgentResults:  agentResults,
+		Summary:       summary,
+	}
+	if err := workflow.ExecuteActivity(
+		workflow.WithActivityOptions(ctx, postReviewOpts),
+		activities.ActivityPostReview,
+		postReviewInput,
+	).Get(ctx, nil); err != nil {
+		logger.Warn("Failed to post GitHub review — continuing", "error", err)
+	}
+
 	// Phase 4: Triage — classify each finding as auto-fixable or human-required
 	allFindings := flattenFindings(agentResults)
 	logger.Info("Starting triage", "findings_count", len(allFindings))
@@ -173,7 +211,17 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		"auto_fixable", len(autoFixable),
 		"human_required", len(humanRequired))
 
-	// Phase 5: Fix fan-out — one child workflow per auto-fixable finding
+	// Phase 5: Fix fan-out — one child workflow per auto-fixable finding (only when caller opted in)
+	if !input.AutoFixEnabled {
+		logger.Info("Auto-fix disabled for this PR; skipping fix phases",
+			"pr_author", input.PRAuthor)
+		return &types.PRReviewResult{
+			Summary: summary,
+			Triage:  triageDecisions,
+		}, nil
+	}
+
+	// (AutoFixEnabled == true from here down)
 	var fixFutures []workflow.ChildWorkflowFuture
 	for _, decision := range autoFixable {
 		cwo := workflow.ChildWorkflowOptions{
