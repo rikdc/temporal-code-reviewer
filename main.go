@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/google/go-github/v68/github"
 	"github.com/rikdc/temporal-code-reviewer/activities"
@@ -275,10 +277,16 @@ func main() {
 
 	// Start webhook server
 	logger.Info("Starting webhook server on :8082")
-	webhookHandler := webhook.NewHandler(temporalClient, logger, cfg.AutoFixUsers, cfg.Temporal.DashboardBaseURL)
+	webhookHandler := webhook.NewHandler(temporalClient, logger, cfg.AutoFixUsers)
+	reviewsHandler := reviews.NewHandler(reviewStore, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook/pr", webhookHandler.HandlePR)
+	mux.HandleFunc("/api/reviews", reviewsHandler.HandleList)
+	mux.HandleFunc("/api/reviews/stream", reviewsHandler.HandleStream)
+	mux.HandleFunc("/api/reviews/skip", skipHandler(metricsStore, logger))
+	mux.HandleFunc("/api/feedback", feedbackHandler(metricsStore, logger))
+	mux.HandleFunc("/api/metrics", metricsHandler(metricsStore, logger))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
@@ -310,6 +318,102 @@ func main() {
 	}
 
 	logger.Info("Service stopped")
+}
+
+// feedbackHandler handles POST /api/feedback to record a manual verdict on a finding.
+// Body: {"finding_id":"<uuid>","verdict":"fp|tp|ignored"}
+func feedbackHandler(repo metrics.Repository, logger *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			FindingID string `json:"finding_id"`
+			Verdict   string `json:"verdict"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if body.FindingID == "" || (body.Verdict != "fp" && body.Verdict != "tp" && body.Verdict != "ignored") {
+			http.Error(w, "finding_id and verdict (fp|tp|ignored) required", http.StatusBadRequest)
+			return
+		}
+		if err := repo.SaveFeedback(r.Context(), metrics.FeedbackEvent{
+			FindingID: body.FindingID,
+			Verdict:   body.Verdict,
+			Source:    "manual",
+		}); err != nil {
+			logger.Error("Failed to save feedback", zap.Error(err))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// skipHandler handles POST /api/reviews/skip to mark a PR+SHA as explicitly
+// skipped. The poller's HasReviewedAtSHA check will return true for any
+// PR+SHA recorded here, preventing re-review even when no review was posted
+// (e.g. after discarding a draft review from the GitHub UI).
+//
+// Body: {"repo_owner":"...","repo_name":"...","pr_number":123,"head_sha":"abc123"}
+func skipHandler(repo metrics.Repository, logger *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			RepoOwner string `json:"repo_owner"`
+			RepoName  string `json:"repo_name"`
+			PRNumber  int    `json:"pr_number"`
+			HeadSHA   string `json:"head_sha"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if body.RepoOwner == "" || body.RepoName == "" || body.PRNumber == 0 || body.HeadSHA == "" {
+			http.Error(w, "repo_owner, repo_name, pr_number, and head_sha are required", http.StatusBadRequest)
+			return
+		}
+		if err := repo.RecordSkip(r.Context(), body.RepoOwner, body.RepoName, body.PRNumber, body.HeadSHA); err != nil {
+			logger.Error("Failed to record PR skip", zap.Error(err))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		logger.Info("PR skip recorded via API",
+			zap.String("repo", body.RepoOwner+"/"+body.RepoName),
+			zap.Int("pr_number", body.PRNumber),
+			zap.String("head_sha", body.HeadSHA))
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// metricsHandler handles GET /api/metrics?since=<RFC3339> and returns agent metrics as JSON.
+func metricsHandler(repo metrics.Repository, logger *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		since := time.Now().AddDate(0, -1, 0) // default: last 30 days
+		if s := r.URL.Query().Get("since"); s != "" {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				since = t
+			}
+		}
+		results, err := repo.ListAgentMetrics(r.Context(), since)
+		if err != nil {
+			logger.Error("Failed to list agent metrics", zap.Error(err))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+	}
 }
 
 // upsertPollerSchedule creates or updates the Temporal Schedule that drives

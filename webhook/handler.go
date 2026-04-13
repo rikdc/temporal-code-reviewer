@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"github.com/rikdc/temporal-code-reviewer/types"
 	"github.com/rikdc/temporal-code-reviewer/workflows"
 	"go.temporal.io/sdk/client"
@@ -13,23 +14,21 @@ import (
 
 // Handler processes GitHub webhook events
 type Handler struct {
-	temporalClient   client.Client
-	logger           *zap.Logger
-	autoFixUsers     map[string]bool // GitHub logins that receive auto-fix PRs
-	dashboardBaseURL string
+	temporalClient client.Client
+	logger         *zap.Logger
+	autoFixUsers   map[string]bool // GitHub logins that receive auto-fix PRs
 }
 
 // NewHandler creates a new webhook handler
-func NewHandler(temporalClient client.Client, logger *zap.Logger, autoFixUsers []string, dashboardBaseURL string) *Handler {
+func NewHandler(temporalClient client.Client, logger *zap.Logger, autoFixUsers []string) *Handler {
 	allowed := make(map[string]bool, len(autoFixUsers))
 	for _, u := range autoFixUsers {
 		allowed[u] = true
 	}
 	return &Handler{
-		temporalClient:   temporalClient,
-		logger:           logger,
-		autoFixUsers:     allowed,
-		dashboardBaseURL: dashboardBaseURL,
+		temporalClient: temporalClient,
+		logger:         logger,
+		autoFixUsers:   allowed,
 	}
 }
 
@@ -92,11 +91,19 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate workflow ID — source prefix makes it easy to identify in the Temporal UI
-	workflowID := fmt.Sprintf("pr-review/webhook/%s/%s/%d",
+	// Short SHA makes the ID human-readable in the Temporal UI and ensures
+	// it matches the ID the poller would generate for the same commit, so
+	// Temporal's reuse policy provides dedup across both trigger sources.
+	headSHA := payload.PullRequest.Head.SHA
+	shortSHA := headSHA
+	if len(shortSHA) > 8 {
+		shortSHA = shortSHA[:8]
+	}
+	workflowID := fmt.Sprintf("pr-review/%s/%s/%d/%s",
 		payload.Repository.Owner.Login,
 		payload.Repository.Name,
-		payload.PullRequest.Number)
+		payload.PullRequest.Number,
+		shortSHA)
 
 	h.logger.Info("Starting PR review workflow",
 		zap.String("workflow_id", workflowID),
@@ -116,10 +123,14 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 		AutoFixEnabled: h.autoFixUsers[payload.Sender.Login],
 	}
 
-	// Start Temporal workflow
+	// Start Temporal workflow.
+	// ALLOW_DUPLICATE_FAILED_ONLY prevents re-review of a PR that was already
+	// successfully reviewed at this SHA — matching the poller's policy so both
+	// trigger sources share the same dedup guarantee.
 	options := client.StartWorkflowOptions{
-		ID:        workflowID,
-		TaskQueue: "pr-review-queue",
+		ID:                       workflowID,
+		TaskQueue:                "pr-review-queue",
+		WorkflowIDReusePolicy:    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 	}
 
 	workflowRun, err := h.temporalClient.ExecuteWorkflow(r.Context(), options, workflows.PRReviewWorkflow, input)
@@ -130,7 +141,7 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return response with dashboard URL (use workflow ID, not run ID)
-	dashboardURL := fmt.Sprintf("%s/dashboard?workflowId=%s", h.dashboardBaseURL, workflowID)
+	dashboardURL := fmt.Sprintf("http://localhost:8081/dashboard?workflowId=%s", workflowID)
 
 	response := map[string]string{
 		"workflow_id":   workflowID,
