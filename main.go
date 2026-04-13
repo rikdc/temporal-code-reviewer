@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -17,9 +18,10 @@ import (
 	"github.com/rikdc/temporal-code-reviewer/types"
 	"github.com/rikdc/temporal-code-reviewer/webhook"
 	"github.com/rikdc/temporal-code-reviewer/workflows"
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
-	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/worker"
 	"go.uber.org/zap"
 )
@@ -302,6 +304,16 @@ func upsertPollerSchedule(ctx context.Context, temporalClient client.Client, cfg
 		logger.Info("Updated existing poller schedule",
 			zap.String("schedule_id", scheduleID),
 			zap.Strings("repos", cfg.Poller.Repos))
+		return
+	}
+
+	// Only fall through to Create when the schedule genuinely doesn't exist yet.
+	// Any other error (network failure, permission denied, etc.) is non-recoverable
+	// here and should not trigger a Create attempt, which would fail with AlreadyExists
+	// and obscure the real cause.
+	var notFound *serviceerror.NotFound
+	if !errors.As(err, &notFound) {
+		logger.Error("Failed to update poller schedule", zap.Error(err))
 		return
 	}
 
