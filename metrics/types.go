@@ -2,6 +2,13 @@ package metrics
 
 import "time"
 
+// Verdict constants for FeedbackEvent.Verdict.
+const (
+	VerdictTP      = "tp"
+	VerdictFP      = "fp"
+	VerdictIgnored = "ignored"
+)
+
 // ReviewRun records one complete PR review workflow execution.
 type ReviewRun struct {
 	ID             string    // Temporal workflow ID

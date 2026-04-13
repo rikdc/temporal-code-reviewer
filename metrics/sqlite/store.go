@@ -76,10 +76,12 @@ CREATE TABLE IF NOT EXISTS pr_skips (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_review ON agent_runs(review_run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_name_created ON agent_runs(agent_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_findings_agent_run ON findings(agent_run_id);
 CREATE INDEX IF NOT EXISTS idx_findings_comment ON findings(github_comment_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_finding ON feedback_events(finding_id);
 CREATE INDEX IF NOT EXISTS idx_prompt_versions_agent ON prompt_versions(agent_name, disabled);
+CREATE INDEX IF NOT EXISTS idx_review_runs_lookup ON review_runs(repo_owner, repo_name, pr_number, head_sha);
 `
 
 // Store is the SQLite implementation of metrics.Repository.
@@ -107,6 +109,20 @@ func Open(path string) (*Store, error) {
 
 // Close closes the underlying database connection.
 func (s *Store) Close() error { return s.db.Close() }
+
+func ensureID(id string) string {
+	if id == "" {
+		return uuid.New().String()
+	}
+	return id
+}
+
+func calculateFPRate(falsePositives, total int) float64 {
+	if total > 0 {
+		return float64(falsePositives) / float64(total)
+	}
+	return 0
+}
 
 // ── Prompt versions ──────────────────────────────────────────────────────────
 
@@ -150,9 +166,7 @@ func (s *Store) ListPromptVersions(ctx context.Context, agentName string) ([]met
 
 // AddPromptVersion inserts a new prompt version. It generates a UUID if pv.ID is empty.
 func (s *Store) AddPromptVersion(ctx context.Context, pv metrics.PromptVersion) error {
-	if pv.ID == "" {
-		pv.ID = uuid.New().String()
-	}
+	pv.ID = ensureID(pv.ID)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO prompt_versions (id, agent_name, label, content, disabled) VALUES (?, ?, ?, ?, ?)`,
 		pv.ID, pv.AgentName, pv.Label, pv.Content, boolToInt(pv.Disabled),
@@ -214,9 +228,7 @@ func (s *Store) SetGitHubReviewID(ctx context.Context, workflowID string, review
 // ── Agent runs ───────────────────────────────────────────────────────────────
 
 func (s *Store) SaveAgentRun(ctx context.Context, r metrics.AgentRun) error {
-	if r.ID == "" {
-		r.ID = uuid.New().String()
-	}
+	r.ID = ensureID(r.ID)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO agent_runs
 		 (id, review_run_id, agent_name, status, model, input_tokens, output_tokens, latency_ms, findings_count, prompt_version_id)
@@ -257,9 +269,7 @@ func (s *Store) SaveFindings(ctx context.Context, findings []metrics.FindingReco
 	}
 	defer stmt.Close()
 	for _, f := range findings {
-		if f.ID == "" {
-			f.ID = uuid.New().String()
-		}
+		f.ID = ensureID(f.ID)
 		if _, err := stmt.ExecContext(ctx, f.ID, f.AgentRunID, f.Severity, f.Title, f.FilePath, f.LineNumber, f.GitHubCommentID); err != nil {
 			return err
 		}
@@ -295,9 +305,7 @@ func (s *Store) GetFindingByCommentID(ctx context.Context, commentID int64) (met
 // ── Feedback ─────────────────────────────────────────────────────────────────
 
 func (s *Store) SaveFeedback(ctx context.Context, f metrics.FeedbackEvent) error {
-	if f.ID == "" {
-		f.ID = uuid.New().String()
-	}
+	f.ID = ensureID(f.ID)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO feedback_events (id, finding_id, verdict, source) VALUES (?, ?, ?, ?)`,
 		f.ID, f.FindingID, f.Verdict, f.Source,
@@ -312,16 +320,16 @@ func (s *Store) GetAgentMetrics(ctx context.Context, agentName string, since tim
 		SELECT
 			COUNT(DISTINCT ar.id)                                          AS review_count,
 			COALESCE(SUM(ar.findings_count), 0)                           AS findings_total,
-			COALESCE(SUM(CASE WHEN fe.verdict = 'fp' THEN 1 ELSE 0 END), 0) AS false_positives,
-			COALESCE(SUM(CASE WHEN fe.verdict = 'tp' THEN 1 ELSE 0 END), 0) AS true_positives,
-			COALESCE(AVG(ar.latency_ms), 0)                               AS avg_latency,
-			COALESCE(AVG(ar.input_tokens), 0)                             AS avg_input,
-			COALESCE(AVG(ar.output_tokens), 0)                            AS avg_output
+			COALESCE(SUM(CASE WHEN fe.verdict = ? THEN 1 ELSE 0 END), 0) AS false_positives,
+			COALESCE(SUM(CASE WHEN fe.verdict = ? THEN 1 ELSE 0 END), 0) AS true_positives,
+			COALESCE(AVG(ar.latency_ms), 0)                              AS avg_latency,
+			COALESCE(AVG(ar.input_tokens), 0)                            AS avg_input,
+			COALESCE(AVG(ar.output_tokens), 0)                           AS avg_output
 		FROM agent_runs ar
 		LEFT JOIN findings f ON f.agent_run_id = ar.id
 		LEFT JOIN feedback_events fe ON fe.finding_id = f.id
 		WHERE ar.agent_name = ? AND ar.created_at >= ?`,
-		agentName, since.UTC().Format(time.RFC3339),
+		metrics.VerdictFP, metrics.VerdictTP, agentName, since.UTC().Format(time.RFC3339),
 	)
 	var m metrics.AgentMetrics
 	m.AgentName = agentName
@@ -329,9 +337,7 @@ func (s *Store) GetAgentMetrics(ctx context.Context, agentName string, since tim
 		&m.AvgLatencyMS, &m.AvgInputTokens, &m.AvgOutputTokens); err != nil {
 		return m, err
 	}
-	if m.FindingsTotal > 0 {
-		m.FPRate = float64(m.FalsePositives) / float64(m.FindingsTotal)
-	}
+	m.FPRate = calculateFPRate(m.FalsePositives, m.FindingsTotal)
 	return m, nil
 }
 
@@ -342,14 +348,14 @@ func (s *Store) GetPromptVersionMetrics(ctx context.Context, promptVersionID str
 			pv.label,
 			COUNT(DISTINCT ar.id)                                            AS review_count,
 			COALESCE(SUM(ar.findings_count), 0)                             AS findings_total,
-			COALESCE(SUM(CASE WHEN fe.verdict = 'fp' THEN 1 ELSE 0 END), 0) AS false_positives,
-			COALESCE(SUM(CASE WHEN fe.verdict = 'tp' THEN 1 ELSE 0 END), 0) AS true_positives
+			COALESCE(SUM(CASE WHEN fe.verdict = ? THEN 1 ELSE 0 END), 0) AS false_positives,
+			COALESCE(SUM(CASE WHEN fe.verdict = ? THEN 1 ELSE 0 END), 0) AS true_positives
 		FROM prompt_versions pv
 		LEFT JOIN agent_runs ar ON ar.prompt_version_id = pv.id
 		LEFT JOIN findings f ON f.agent_run_id = ar.id
 		LEFT JOIN feedback_events fe ON fe.finding_id = f.id
 		WHERE pv.id = ?
-		GROUP BY pv.id`, promptVersionID,
+		GROUP BY pv.id`, metrics.VerdictFP, metrics.VerdictTP, promptVersionID,
 	)
 	var m metrics.PromptVersionMetrics
 	m.PromptVersionID = promptVersionID
@@ -357,40 +363,43 @@ func (s *Store) GetPromptVersionMetrics(ctx context.Context, promptVersionID str
 		&m.FalsePositives, &m.TruePositives); err != nil {
 		return m, err
 	}
-	if m.FindingsTotal > 0 {
-		m.FPRate = float64(m.FalsePositives) / float64(m.FindingsTotal)
-	}
+	m.FPRate = calculateFPRate(m.FalsePositives, m.FindingsTotal)
 	return m, nil
 }
 
 func (s *Store) ListAgentMetrics(ctx context.Context, since time.Time) ([]metrics.AgentMetrics, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT agent_name FROM agent_runs WHERE created_at >= ?`,
-		since.UTC().Format(time.RFC3339))
+		SELECT
+			ar.agent_name,
+			COUNT(DISTINCT ar.id)                                          AS review_count,
+			COALESCE(SUM(ar.findings_count), 0)                           AS findings_total,
+			COALESCE(SUM(CASE WHEN fe.verdict = ? THEN 1 ELSE 0 END), 0) AS false_positives,
+			COALESCE(SUM(CASE WHEN fe.verdict = ? THEN 1 ELSE 0 END), 0) AS true_positives,
+			COALESCE(AVG(ar.latency_ms), 0)                              AS avg_latency,
+			COALESCE(AVG(ar.input_tokens), 0)                            AS avg_input,
+			COALESCE(AVG(ar.output_tokens), 0)                           AS avg_output
+		FROM agent_runs ar
+		LEFT JOIN findings f ON f.agent_run_id = ar.id
+		LEFT JOIN feedback_events fe ON fe.finding_id = f.id
+		WHERE ar.created_at >= ?
+		GROUP BY ar.agent_name`,
+		metrics.VerdictFP, metrics.VerdictTP, since.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var names []string
-	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
-			return nil, err
-		}
-		names = append(names, n)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 	var result []metrics.AgentMetrics
-	for _, n := range names {
-		m, err := s.GetAgentMetrics(ctx, n, since)
-		if err != nil {
+	for rows.Next() {
+		var m metrics.AgentMetrics
+		if err := rows.Scan(&m.AgentName, &m.ReviewCount, &m.FindingsTotal,
+			&m.FalsePositives, &m.TruePositives,
+			&m.AvgLatencyMS, &m.AvgInputTokens, &m.AvgOutputTokens); err != nil {
 			return nil, err
 		}
+		m.FPRate = calculateFPRate(m.FalsePositives, m.FindingsTotal)
 		result = append(result, m)
 	}
-	return result, nil
+	return result, rows.Err()
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
