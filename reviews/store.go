@@ -109,7 +109,10 @@ func (s *Store) Subscribe() chan Record {
 	return ch
 }
 
-// Unsubscribe removes a subscriber and closes its channel.
+// Unsubscribe removes a subscriber channel. The channel is not closed here
+// because Add copies the slice before releasing the lock and may still be
+// writing to it; closing would cause a panic. The SSE handler drains via
+// r.Context().Done() and the channel is GC'd when no longer referenced.
 func (s *Store) Unsubscribe(ch chan Record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -117,7 +120,6 @@ func (s *Store) Unsubscribe(ch chan Record) {
 	for i, sub := range s.subscribers {
 		if sub == ch {
 			s.subscribers = append(s.subscribers[:i], s.subscribers[i+1:]...)
-			close(ch)
 			return
 		}
 	}

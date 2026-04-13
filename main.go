@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/google/go-github/v68/github"
@@ -15,6 +16,9 @@ import (
 	"github.com/rikdc/temporal-code-reviewer/dashboard"
 	"github.com/rikdc/temporal-code-reviewer/events"
 	"github.com/rikdc/temporal-code-reviewer/llm"
+	"github.com/rikdc/temporal-code-reviewer/metrics"
+	metricsqlite "github.com/rikdc/temporal-code-reviewer/metrics/sqlite"
+	"github.com/rikdc/temporal-code-reviewer/reviews"
 	"github.com/rikdc/temporal-code-reviewer/types"
 	"github.com/rikdc/temporal-code-reviewer/webhook"
 	"github.com/rikdc/temporal-code-reviewer/workflows"
@@ -50,11 +54,50 @@ func main() {
 	logger.Info("Initializing OpenRouter LLM client")
 	llmClient := llm.NewClient(&cfg.OpenRouter, logger)
 
-	// Initialize prompt loader
+	// Initialize prompt loader (disk fallback)
 	promptLoader := llm.NewPromptLoader("prompts")
+
+	// Initialize metrics store
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		logger.Fatal("Failed to get home directory", zap.Error(err))
+	}
+	metricsDBPath := filepath.Join(homeDir, ".config", "prism", "metrics.db")
+	metricsStore, err := metricsqlite.Open(metricsDBPath)
+	if err != nil {
+		logger.Fatal("Failed to open metrics database", zap.String("path", metricsDBPath), zap.Error(err))
+	}
+	defer metricsStore.Close()
+	logger.Info("Metrics database opened", zap.String("path", metricsDBPath))
+
+	// Seed prompt versions from disk if no DB versions exist yet.
+	type agentSeed struct{ name, file string }
+	seeds := []agentSeed{
+		{"Security", cfg.Agents.Security.PromptFile},
+		{"Style", cfg.Agents.Style.PromptFile},
+		{"Logic", cfg.Agents.Logic.PromptFile},
+		{"Documentation", cfg.Agents.Documentation.PromptFile},
+		{"Triage", cfg.Agents.Triage.PromptFile},
+	}
+	for _, s := range seeds {
+		content, err := promptLoader.Load(s.file)
+		if err != nil {
+			logger.Warn("Could not read prompt file for seeding", zap.String("agent", s.name), zap.Error(err))
+			continue
+		}
+		if err := metricsStore.SeedPrompt(context.Background(), s.name, "v1", content); err != nil {
+			logger.Warn("Could not seed prompt version", zap.String("agent", s.name), zap.Error(err))
+		}
+	}
+
+	// Build prompt registry (A/B selection backed by DB).
+	promptRegistry := metrics.NewPromptRegistry(metricsStore, promptLoader)
 
 	// Initialize event bus
 	eventBus := events.NewEventBus()
+
+	// Initialize review store (in-memory, feeds SSE dashboard)
+	reviewStore := reviews.NewStore()
 
 	// Get Temporal address from environment
 	temporalAddress := os.Getenv("TEMPORAL_ADDRESS")
@@ -108,19 +151,19 @@ func main() {
 
 	// Register review agents with LLM integration
 	w.RegisterActivityWithOptions(
-		activities.NewSecurityAgent(eventBus, logger, llmClient, &cfg.Agents.Security, promptLoader).Execute,
+		activities.NewSecurityAgent(eventBus, logger, llmClient, &cfg.Agents.Security, promptRegistry, metricsStore).Execute,
 		activity.RegisterOptions{Name: activities.ActivitySecurity},
 	)
 	w.RegisterActivityWithOptions(
-		activities.NewStyleAgent(eventBus, logger, llmClient, &cfg.Agents.Style, promptLoader).Execute,
+		activities.NewStyleAgent(eventBus, logger, llmClient, &cfg.Agents.Style, promptRegistry, metricsStore).Execute,
 		activity.RegisterOptions{Name: activities.ActivityStyle},
 	)
 	w.RegisterActivityWithOptions(
-		activities.NewLogicAgent(eventBus, logger, llmClient, &cfg.Agents.Logic, promptLoader).Execute,
+		activities.NewLogicAgent(eventBus, logger, llmClient, &cfg.Agents.Logic, promptRegistry, metricsStore).Execute,
 		activity.RegisterOptions{Name: activities.ActivityLogic},
 	)
 	w.RegisterActivityWithOptions(
-		activities.NewDocsAgent(eventBus, logger, llmClient, &cfg.Agents.Documentation, promptLoader).Execute,
+		activities.NewDocsAgent(eventBus, logger, llmClient, &cfg.Agents.Documentation, promptRegistry, metricsStore).Execute,
 		activity.RegisterOptions{Name: activities.ActivityDocs},
 	)
 	w.RegisterActivityWithOptions(
@@ -129,7 +172,7 @@ func main() {
 	)
 
 	// Register triage agent
-	triageAgent := activities.NewTriageAgent(eventBus, logger, llmClient, &cfg.Agents.Triage, promptLoader)
+	triageAgent := activities.NewTriageAgent(eventBus, logger, llmClient, &cfg.Agents.Triage, promptRegistry)
 	w.RegisterActivityWithOptions(
 		triageAgent.Execute,
 		activity.RegisterOptions{Name: activities.ActivityTriage},
@@ -174,8 +217,27 @@ func main() {
 		activity.RegisterOptions{Name: activities.ActivityListOpenPRs},
 	)
 
+	// Register metrics activities
+	metricsActivity := activities.NewMetricsActivity(metricsStore, logger)
+	w.RegisterActivityWithOptions(
+		metricsActivity.HasReviewedAtSHA,
+		activity.RegisterOptions{Name: activities.ActivityHasReviewedAtSHA},
+	)
+	w.RegisterActivityWithOptions(
+		metricsActivity.RecordSkip,
+		activity.RegisterOptions{Name: activities.ActivityRecordSkip},
+	)
+
+	// Register feedback poller activity and workflow
+	feedbackPollerActivity := activities.NewFeedbackPollerActivity(ghClient, metricsStore, logger)
+	w.RegisterActivityWithOptions(
+		feedbackPollerActivity.CheckFeedback,
+		activity.RegisterOptions{Name: activities.ActivityCheckFeedback},
+	)
+	w.RegisterWorkflow(workflows.FeedbackPollerWorkflow)
+
 	// Register post review activity
-	postReviewActivity := activities.NewPostReviewActivity(ghClient, logger)
+	postReviewActivity := activities.NewPostReviewActivity(ghClient, logger, reviewStore, metricsStore)
 	w.RegisterActivityWithOptions(
 		postReviewActivity.PostReview,
 		activity.RegisterOptions{Name: activities.ActivityPostReview},

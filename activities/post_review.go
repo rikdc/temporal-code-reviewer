@@ -169,6 +169,8 @@ func (a *PostReviewActivity) saveMetrics(ctx context.Context, workflowID string,
 		ctx, pr.RepoOwner, pr.RepoName, pr.PRNumber, githubReviewID, nil,
 	)
 	if err != nil {
+		// Non-fatal: proceed with an empty map so findings are still recorded,
+		// but GitHubCommentID will be 0 (feedback correlation unavailable for this review).
 		a.logger.Warn("Failed to list review comments for metrics", zap.Error(err))
 	}
 

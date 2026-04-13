@@ -29,7 +29,7 @@ func (a *MetricsActivity) HasReviewedAtSHA(ctx context.Context, pr types.PRRevie
 			zap.String("repo", pr.RepoOwner+"/"+pr.RepoName),
 			zap.Int("pr_number", pr.PRNumber),
 			zap.Error(err))
-		return false, nil // non-fatal: fall through to HasPendingReview
+		return false, nil // non-fatal: metrics DB unavailability should not block PR deduplication
 	}
 	return reviewed, nil
 }
