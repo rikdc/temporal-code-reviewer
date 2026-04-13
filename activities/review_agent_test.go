@@ -66,7 +66,7 @@ func TestReviewAgent_Execute_Success(t *testing.T) {
 		Logger:       zap.NewNop(),
 		LLMClient:    reviewer,
 		Config:       &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.3, PromptFile: "security.txt"},
-		PromptLoader: llm.NewPromptLoader(promptDir),
+		PromptSource: llm.NewPromptLoader(promptDir),
 	}
 
 	env := newTestActivityEnv(t)
@@ -107,7 +107,7 @@ func TestReviewAgent_Execute_LLMError(t *testing.T) {
 		Logger:       zap.NewNop(),
 		LLMClient:    reviewer,
 		Config:       &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.3, PromptFile: "security.txt"},
-		PromptLoader: llm.NewPromptLoader(promptDir),
+		PromptSource: llm.NewPromptLoader(promptDir),
 	}
 
 	env := newTestActivityEnv(t)
@@ -144,7 +144,7 @@ func TestReviewAgent_Execute_InvalidJSON(t *testing.T) {
 		Logger:       zap.NewNop(),
 		LLMClient:    reviewer,
 		Config:       &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.3, PromptFile: "security.txt"},
-		PromptLoader: llm.NewPromptLoader(promptDir),
+		PromptSource: llm.NewPromptLoader(promptDir),
 	}
 
 	env := newTestActivityEnv(t)
@@ -169,7 +169,7 @@ func TestNewSecurityAgent_AcceptsInterfaces(t *testing.T) {
 
 	agent := NewSecurityAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{
 		Model: "m", MaxTokens: 1, Temperature: 0, PromptFile: "f",
-	}, llm.NewPromptLoader("."))
+	}, llm.NewPromptLoader("."), nil)
 
 	assert.Equal(t, "Security", agent.Name)
 	assert.Equal(t, pub, agent.EventBus)

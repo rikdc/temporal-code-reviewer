@@ -36,7 +36,7 @@ func TestTriageAgent_Execute_CriticalSecurityIsHumanRequired(t *testing.T) {
 	promptDir := t.TempDir()
 	require.NoError(t, writePromptFile(promptDir, "triage.md", "You are a triage agent."))
 
-	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2}, llm.NewPromptLoader(promptDir))
+	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2, PromptFile: "triage.md"}, llm.NewPromptLoader(promptDir))
 
 	env := newTestActivityEnv(t)
 	env.RegisterActivity(agent.Execute)
@@ -90,7 +90,7 @@ func TestTriageAgent_Execute_LowStyleIsAutoFixable(t *testing.T) {
 	promptDir := t.TempDir()
 	require.NoError(t, writePromptFile(promptDir, "triage.md", "You are a triage agent."))
 
-	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2}, llm.NewPromptLoader(promptDir))
+	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2, PromptFile: "triage.md"}, llm.NewPromptLoader(promptDir))
 
 	env := newTestActivityEnv(t)
 	env.RegisterActivity(agent.Execute)
@@ -136,7 +136,7 @@ func TestTriageAgent_Execute_UnmatchedFindingDefaultsToHumanRequired(t *testing.
 	promptDir := t.TempDir()
 	require.NoError(t, writePromptFile(promptDir, "triage.md", "You are a triage agent."))
 
-	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2}, llm.NewPromptLoader(promptDir))
+	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2, PromptFile: "triage.md"}, llm.NewPromptLoader(promptDir))
 
 	env := newTestActivityEnv(t)
 	env.RegisterActivity(agent.Execute)
@@ -199,7 +199,7 @@ func TestTriageAgent_Execute_MultipleFindings(t *testing.T) {
 	promptDir := t.TempDir()
 	require.NoError(t, writePromptFile(promptDir, "triage.md", "You are a triage agent."))
 
-	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2}, llm.NewPromptLoader(promptDir))
+	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2, PromptFile: "triage.md"}, llm.NewPromptLoader(promptDir))
 
 	env := newTestActivityEnv(t)
 	env.RegisterActivity(agent.Execute)
