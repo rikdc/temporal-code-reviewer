@@ -44,6 +44,17 @@ Analyze the provided code diff for logic issues, focusing on:
 - **Database N+1 queries**: Multiple queries where one would suffice
 - **Missing caching**: Repeated expensive computations
 
+## Do NOT Report
+
+- Observations about what the diff does or how it works
+- Summaries of changes ("this method was renamed", "this refactors X")
+- Findings where you cannot state a specific action the author must take
+- Style preferences or suggestions that don't affect correctness
+- Low-confidence suspicions ("this might be an issue if...")
+- Anything you would not block a PR over
+
+If you have no actionable findings, return an empty findings array and status "passed".
+
 ## Review Guidelines
 
 1. **Trace execution paths**: Follow the code flow to find issues
@@ -64,11 +75,11 @@ Your response must match this EXACT schema:
   "findings": [
     {
       "severity": "critical" | "high" | "medium" | "low",
-      "title": "Brief description of the logic issue",
-      "description": "Detailed explanation with line references and suggested fix",
+      "title": "Brief title for the issue (one sentence, no period)",
+      "description": "Do NOT describe what the diff does or summarize the change. Explain the specific problem: what can go wrong, under what circumstances, and what the consequence is. Walk through the execution path that leads to the bug. Show your reasoning so the author understands why this needs to change. Write plainly: no em-dashes, no 'it's worth noting', no 'leverage', no 'ensure', no 'utilize'. Use commas and short sentences instead.",
       "file": "relative/path/to/file.go",
       "line": 42,
-      "suggested_fix": "Concrete code change to resolve the issue"
+      "suggested_fix": "Concrete code showing the fix. No backtick fences, no markdown — just the raw code. Show only the changed lines or a minimal complete snippet."
     }
   ],
   "summary": "Overall assessment of code correctness"
@@ -78,7 +89,7 @@ Your response must match this EXACT schema:
 ### Finding Location Fields
 - **file**: The relative file path where the issue is found (from the diff headers)
 - **line**: The best-effort line number in the new version of the file
-- **suggested_fix**: A concrete, minimal code change that resolves the issue. Be specific — show the replacement code, not just a description.
+- **suggested_fix**: Raw Go code showing the fix. No markdown backtick fences — the code will be placed inside a code block automatically. Show a minimal, complete snippet.
 
 ### Status Values
 - **passed**: No logic errors or significant concerns found
@@ -88,8 +99,7 @@ Your response must match this EXACT schema:
 ### Severity Levels
 - **critical**: Code will crash or produce incorrect results (nil deref, logic error)
 - **high**: Likely to cause bugs in certain conditions (race condition, missing validation)
-- **medium**: Potential issues or code smells (suboptimal algorithm, missing edge case)
-- **low**: Minor improvements (refactoring opportunities, clarity)
+- **medium**: Potential issues with a clear required fix (suboptimal algorithm, missing edge case with real consequence)
 
 ## Example Output
 
@@ -99,35 +109,19 @@ Your response must match this EXACT schema:
   "findings": [
     {
       "severity": "critical",
-      "title": "Nil pointer dereference in error path",
-      "description": "Line 67: When `fetchUser()` returns an error, `user` is nil but still accessed at line 69 (`user.ID`).",
+      "title": "Nil pointer dereference when fetchUser returns an error",
+      "description": "At line 67, `fetchUser()` is called and its error is checked, but the code continues to access `user.ID` at line 69 even on the error path. In Go, a function that returns both a value and an error will typically return a nil value when it returns an error — so `user` will be nil here, and accessing `.ID` will cause a panic at runtime. This is one of the most common sources of production crashes in Go.",
       "file": "handlers/user.go",
       "line": 67,
-      "suggested_fix": "if user == nil { return err }"
+      "suggested_fix": "user, err := fetchUser(id)\nif err != nil {\n    return err\n}"
     },
     {
       "severity": "high",
-      "title": "Race condition in concurrent map access",
-      "description": "Lines 120-125: Multiple goroutines read and write to `cache` map without synchronization.",
+      "title": "Race condition on concurrent map access",
+      "description": "The `cache` map at lines 120-125 is read and written by multiple goroutines without any synchronization. Go's map implementation is not safe for concurrent access — concurrent reads are fine, but a concurrent read and write (or two writes) will cause a runtime panic with 'concurrent map read and map write'. Under load, this will crash the process. Use `sync.RWMutex` (read lock for reads, write lock for writes) or `sync.Map` if the access pattern is mostly reads.",
       "file": "cache/store.go",
       "line": 120,
-      "suggested_fix": "var mu sync.RWMutex // protect cache map access"
-    },
-    {
-      "severity": "medium",
-      "title": "Missing boundary check in slice access",
-      "description": "Line 45: Accessing `items[0]` without checking if slice is empty.",
-      "file": "service/items.go",
-      "line": 45,
-      "suggested_fix": "if len(items) == 0 { return ErrNoItems }"
-    },
-    {
-      "severity": "low",
-      "title": "Inefficient string concatenation in loop",
-      "description": "Lines 90-95: Using `+=` for string concatenation in loop is O(n²).",
-      "file": "utils/format.go",
-      "line": 90,
-      "suggested_fix": "var b strings.Builder\nfor _, s := range items {\n    b.WriteString(s)\n}"
+      "suggested_fix": "var mu sync.RWMutex\n\n// reading:\nmu.RLock()\nv := cache[key]\nmu.RUnlock()\n\n// writing:\nmu.Lock()\ncache[key] = v\nmu.Unlock()"
     }
   ],
   "summary": "Found critical nil dereference and race condition that will cause runtime panics. Must be fixed before merge. Also identified boundary check and performance improvements."
@@ -140,4 +134,5 @@ Your response must match this EXACT schema:
 - Include at least a summary even if no findings
 - Be specific about the bug and how to reproduce
 - Provide clear remediation steps
-- Consider both correctness and maintainability
+- Only include findings where you can state exactly what must change and why
+- If uncertain, omit the finding

@@ -7,6 +7,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/stretchr/testify v1.10.0
+	go.temporal.io/api v1.62.1
 	go.temporal.io/sdk v1.40.0
 	go.uber.org/zap v1.27.1
 	gopkg.in/yaml.v3 v3.0.1
@@ -25,7 +26,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	go.temporal.io/api v1.62.1 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
