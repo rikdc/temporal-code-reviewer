@@ -99,6 +99,7 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1) // SQLite write serialisation
 	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -110,21 +111,13 @@ func (s *Store) Close() error { return s.db.Close() }
 // ── Prompt versions ──────────────────────────────────────────────────────────
 
 // SeedPrompt inserts an initial prompt version for an agent if none exist yet.
-// It is idempotent — calling it multiple times with the same agent name only
-// inserts once.
+// It is idempotent — the INSERT is conditional so concurrent callers are safe.
 func (s *Store) SeedPrompt(ctx context.Context, agentName, label, content string) error {
-	var count int
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM prompt_versions WHERE agent_name = ?`, agentName,
-	).Scan(&count); err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO prompt_versions (id, agent_name, label, content) VALUES (?, ?, ?, ?)`,
-		uuid.New().String(), agentName, label, content,
+		`INSERT INTO prompt_versions (id, agent_name, label, content)
+		 SELECT ?, ?, ?, ?
+		 WHERE NOT EXISTS (SELECT 1 FROM prompt_versions WHERE agent_name = ?)`,
+		uuid.New().String(), agentName, label, content, agentName,
 	)
 	return err
 }
@@ -255,7 +248,7 @@ func (s *Store) SaveFindings(ctx context.Context, findings []metrics.FindingReco
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit; not actionable on earlier failure
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT OR IGNORE INTO findings (id, agent_run_id, severity, title, file_path, line_number, github_comment_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -385,6 +378,9 @@ func (s *Store) ListAgentMetrics(ctx context.Context, since time.Time) ([]metric
 			return nil, err
 		}
 		names = append(names, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	var result []metrics.AgentMetrics
 	for _, n := range names {
