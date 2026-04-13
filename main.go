@@ -211,7 +211,7 @@ func main() {
 
 	// Start webhook server
 	logger.Info("Starting webhook server on :8082")
-	webhookHandler := webhook.NewHandler(temporalClient, logger, cfg.AutoFixUsers)
+	webhookHandler := webhook.NewHandler(temporalClient, logger, cfg.AutoFixUsers, cfg.Temporal.DashboardBaseURL)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook/pr", webhookHandler.HandlePR)

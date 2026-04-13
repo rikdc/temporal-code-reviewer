@@ -9,6 +9,7 @@ auto_fix_users: []
 
 temporal:
   namespace: "code-reviewer"  # use a dedicated namespace locally to reduce UI clutter
+  dashboard_base_url: ""  # Temporal UI base URL; overridden by TEMPORAL_UI_URL env var. Defaults to http://localhost:8081
 
 poller:
   enabled: false

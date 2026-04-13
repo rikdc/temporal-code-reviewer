@@ -22,6 +22,10 @@ type TemporalConfig struct {
 	// For local dev, use a dedicated namespace (e.g. "code-reviewer") to reduce
 	// clutter in the Temporal UI.
 	Namespace string `yaml:"namespace"`
+	// DashboardBaseURL is the base URL of the Temporal UI used to build
+	// per-workflow links. Defaults to http://localhost:8081 if empty.
+	// Override with the TEMPORAL_UI_URL environment variable.
+	DashboardBaseURL string `yaml:"dashboard_base_url"`
 }
 
 // PollerConfig holds configuration for the GitHub PR polling background process
@@ -86,6 +90,12 @@ func Load(path string) (*Config, error) {
 	// Allow env var override (for local dev and security)
 	if envKey := os.Getenv("OPENROUTER_API_KEY"); envKey != "" {
 		cfg.OpenRouter.APIKey = envKey
+	}
+	if uiURL := os.Getenv("TEMPORAL_UI_URL"); uiURL != "" {
+		cfg.Temporal.DashboardBaseURL = uiURL
+	}
+	if cfg.Temporal.DashboardBaseURL == "" {
+		cfg.Temporal.DashboardBaseURL = "http://localhost:8081"
 	}
 
 	if err := cfg.Validate(); err != nil {

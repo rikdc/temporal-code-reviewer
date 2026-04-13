@@ -13,21 +13,23 @@ import (
 
 // Handler processes GitHub webhook events
 type Handler struct {
-	temporalClient client.Client
-	logger         *zap.Logger
-	autoFixUsers   map[string]bool // GitHub logins that receive auto-fix PRs
+	temporalClient   client.Client
+	logger           *zap.Logger
+	autoFixUsers     map[string]bool // GitHub logins that receive auto-fix PRs
+	dashboardBaseURL string
 }
 
 // NewHandler creates a new webhook handler
-func NewHandler(temporalClient client.Client, logger *zap.Logger, autoFixUsers []string) *Handler {
+func NewHandler(temporalClient client.Client, logger *zap.Logger, autoFixUsers []string, dashboardBaseURL string) *Handler {
 	allowed := make(map[string]bool, len(autoFixUsers))
 	for _, u := range autoFixUsers {
 		allowed[u] = true
 	}
 	return &Handler{
-		temporalClient: temporalClient,
-		logger:         logger,
-		autoFixUsers:   allowed,
+		temporalClient:   temporalClient,
+		logger:           logger,
+		autoFixUsers:     allowed,
+		dashboardBaseURL: dashboardBaseURL,
 	}
 }
 
@@ -128,7 +130,7 @@ func (h *Handler) HandlePR(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return response with dashboard URL (use workflow ID, not run ID)
-	dashboardURL := fmt.Sprintf("http://localhost:8081/dashboard?workflowId=%s", workflowID)
+	dashboardURL := fmt.Sprintf("%s/dashboard?workflowId=%s", h.dashboardBaseURL, workflowID)
 
 	response := map[string]string{
 		"workflow_id":   workflowID,

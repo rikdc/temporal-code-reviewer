@@ -423,10 +423,3 @@ func looksLikeCode(s string) bool {
 	}
 	return false
 }
-
-func capitaliseFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
-}
