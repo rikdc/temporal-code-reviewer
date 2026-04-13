@@ -4,14 +4,22 @@ import "time"
 
 // PRReviewInput contains the input data for a PR review workflow
 type PRReviewInput struct {
-	PRNumber   int    `json:"pr_number"`
-	RepoOwner  string `json:"repo_owner"`
-	RepoName   string `json:"repo_name"`
-	Title      string `json:"title"`
-	DiffURL    string `json:"diff_url"`
-	HeadBranch string `json:"head_branch"` // original PR's source branch
-	HeadSHA    string `json:"head_sha"`    // commit SHA of the PR head — use this as Ref for file reads
-	BaseBranch string `json:"base_branch"` // original PR's target branch
+	PRNumber       int    `json:"pr_number"`
+	RepoOwner      string `json:"repo_owner"`
+	RepoName       string `json:"repo_name"`
+	Title          string `json:"title"`
+	DiffURL        string `json:"diff_url"`
+	HeadBranch     string `json:"head_branch"`      // original PR's source branch
+	HeadSHA        string `json:"head_sha"`         // commit SHA of the PR head — use this as Ref for file reads
+	BaseBranch     string `json:"base_branch"`      // original PR's target branch
+	PRAuthor       string `json:"pr_author"`        // GitHub login of the PR author
+	AutoFixEnabled bool   `json:"auto_fix_enabled"` // whether to run auto-fix phases for this PR
+}
+
+// PollPRsInput is the input for the PollPRsWorkflow triggered by a Temporal Schedule.
+type PollPRsInput struct {
+	Repos        []string `json:"repos"`          // "owner/repo" pairs to poll
+	AutoFixUsers []string `json:"auto_fix_users"` // GitHub logins allowed to receive auto-fixes
 }
 
 // AgentReviewInput contains PR metadata and fetched diff content for agent reviews
@@ -157,6 +165,13 @@ type CreatePRInput struct {
 	RepoOwner      string             `json:"repo_owner"`
 	RepoName       string             `json:"repo_name"`
 	HumanRequired  []TriageDecision   `json:"human_required"`
+}
+
+// PostReviewInput is the input for the GitHub draft review posting activity.
+type PostReviewInput struct {
+	PRReviewInput PRReviewInput `json:"pr_review_input"`
+	AgentResults  []AgentResult `json:"agent_results"`
+	Summary       ReviewSummary `json:"summary"`
 }
 
 // CreatePRResult is the output of the PR creation activity.

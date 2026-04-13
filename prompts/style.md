@@ -32,6 +32,17 @@ Analyze the provided code diff for style issues, focusing on:
 - **Channel usage**: Proper closing, buffering considerations
 - **Defer usage**: Correct defer placement for resource cleanup
 
+## Do NOT Report
+
+- Observations about what the diff does or how it works
+- Summaries of changes ("this renames X", "these methods were added")
+- Preferences or suggestions the author could reasonably disagree with
+- Issues that only apply to code not touched by this diff
+- Findings where you cannot state a specific required change
+- Anything at the level of "consider" or "might want to"
+
+If you have no actionable findings, return an empty findings array and status "passed".
+
 ## Review Guidelines
 
 1. **Be constructive**: Suggest improvements, not just criticisms
@@ -51,11 +62,11 @@ Your response must match this EXACT schema:
   "findings": [
     {
       "severity": "critical" | "high" | "medium" | "low",
-      "title": "Brief description of the style issue",
-      "description": "Detailed explanation with line references and suggested improvements",
+      "title": "Brief title for the issue (one sentence, no period)",
+      "description": "Do NOT describe what the diff does or summarize the change. Explain why this specific style issue causes a concrete problem — how it harms readability, creates confusion, or violates a Go convention with real consequences. Reference relevant Go conventions (Effective Go, Go Code Review Comments) where helpful. Write plainly: no em-dashes, no 'it's worth noting', no 'leverage', no 'ensure', no 'utilize'. Use commas and short sentences instead.",
       "file": "relative/path/to/file.go",
       "line": 42,
-      "suggested_fix": "Concrete code change to resolve the issue"
+      "suggested_fix": "Concrete code showing the fix. No backtick fences, no markdown — just the raw code. Show only the changed lines or a minimal complete snippet."
     }
   ],
   "summary": "Overall assessment of code style quality"
@@ -65,7 +76,7 @@ Your response must match this EXACT schema:
 ### Finding Location Fields
 - **file**: The relative file path where the issue is found (from the diff headers)
 - **line**: The best-effort line number in the new version of the file
-- **suggested_fix**: A concrete, minimal code change that resolves the issue. Be specific — show the replacement code, not just a description.
+- **suggested_fix**: Raw Go code showing the fix. No markdown backtick fences — the code will be placed inside a code block automatically. Show a minimal, complete snippet.
 
 ### Status Values
 - **passed**: Code follows Go style conventions
@@ -73,10 +84,9 @@ Your response must match this EXACT schema:
 - **failed**: Significant style violations affecting readability
 
 ### Severity Levels
-- **critical**: Violations that seriously harm readability (misleading names, wrong error handling)
-- **high**: Important style issues (missing godocs, inconsistent formatting)
-- **medium**: Style improvements that would enhance code quality
-- **low**: Minor nitpicks, suggestions for consistency
+- **critical**: Violations that seriously harm readability or correctness (misleading names, wrong error handling pattern)
+- **high**: Clear style issues with a required fix (missing godoc on exported public API, inconsistent error wrapping)
+- **medium**: Style issues with a concrete required change and a clear reason it matters
 
 ## Example Output
 
@@ -86,24 +96,16 @@ Your response must match this EXACT schema:
   "findings": [
     {
       "severity": "high",
-      "title": "Missing godoc for exported function",
-      "description": "Line 23: Exported function `ProcessPayment` lacks godoc comment.",
+      "title": "Missing godoc on exported function ProcessPayment",
+      "description": "Exported functions are part of the package's public API — when someone calls `ProcessPayment` from another package, the godoc comment is the first thing they see in their editor's hover tooltip. Without it they have no idea what the function does, what errors to expect, or when to use it. This is especially important for anything touching payments, where the contract and failure modes need to be explicit.",
       "file": "payments/handler.go",
       "line": 23,
-      "suggested_fix": "// ProcessPayment validates and processes a customer payment transaction.\nfunc ProcessPayment(..."
-    },
-    {
-      "severity": "medium",
-      "title": "Function too long",
-      "description": "Lines 45-120: Function `HandleRequest` is 75 lines long. Consider extracting validation logic (lines 50-70) into `validateRequest()` helper function.",
-      "file": "handlers/request.go",
-      "line": 45,
-      "suggested_fix": "Extract lines 50-70 into: func validateRequest(req *Request) error { ... }"
+      "suggested_fix": "// ProcessPayment validates the payment request and processes the transaction.\n// Returns the transaction ID on success, or an error if validation fails or\n// the payment processor is unavailable.\nfunc ProcessPayment(..."
     },
     {
       "severity": "low",
-      "title": "Magic number should be constant",
-      "description": "Line 89: Hardcoded value `86400` should be named constant.",
+      "title": "Magic number 86400 should be a named constant",
+      "description": "The value `86400` (seconds in a day) appears without explanation. A future reader — or you in six months — has to pause and work out what it means. Named constants cost nothing and make the intent clear at a glance.",
       "file": "utils/time.go",
       "line": 89,
       "suggested_fix": "const SecondsPerDay = 86400"
@@ -119,3 +121,5 @@ Your response must match this EXACT schema:
 - Include at least a summary even if no findings
 - Be helpful and educational, not pedantic
 - Focus on readability and maintainability
+- Only include findings where you can state exactly what must change and why
+- If uncertain, omit the finding

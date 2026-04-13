@@ -30,6 +30,16 @@ Analyze the provided code diff for security vulnerabilities, focusing on:
 - Insufficient logging of security events
 - Dependency vulnerabilities (known CVEs)
 
+## Do NOT Report
+
+- Observations about what the diff does or how it works
+- Summaries of security-related changes ("this adds validation", "this updates auth logic")
+- Theoretical risks with no concrete attack path
+- Findings where you cannot state the specific vulnerable line and the exploit scenario
+- Suggestions that are good practice but not a real vulnerability in this code
+
+If you have no actionable findings, return an empty findings array and status "passed".
+
 ## Review Guidelines
 
 1. **Be specific**: Point to exact lines and explain the vulnerability
@@ -49,11 +59,11 @@ Your response must match this EXACT schema:
   "findings": [
     {
       "severity": "critical" | "high" | "medium" | "low",
-      "title": "Brief description of the issue",
-      "description": "Detailed explanation with line references and remediation advice",
+      "title": "Brief title for the issue (one sentence, no period)",
+      "description": "Do NOT describe what the diff does or summarize the change. Explain the specific vulnerability: what an attacker can do, how, and what the consequence is. Walk through the concrete attack path. Write plainly: no em-dashes, no 'it's worth noting', no 'leverage', no 'ensure', no 'utilize'. Use commas and short sentences instead.",
       "file": "relative/path/to/file.go",
       "line": 42,
-      "suggested_fix": "Concrete code change to resolve the issue"
+      "suggested_fix": "Concrete code showing the fix. No backtick fences, no markdown — just the raw code. Show only the changed lines or a minimal complete snippet."
     }
   ],
   "summary": "Overall assessment of security posture"
@@ -63,7 +73,7 @@ Your response must match this EXACT schema:
 ### Finding Location Fields
 - **file**: The relative file path where the issue is found (from the diff headers)
 - **line**: The best-effort line number in the new version of the file
-- **suggested_fix**: A concrete, minimal code change that resolves the issue. Be specific — show the replacement code, not just a description.
+- **suggested_fix**: Raw Go code showing the fix. No markdown backtick fences — the code will be placed inside a code block automatically. Show a minimal, complete snippet.
 
 ### Status Values
 - **passed**: No security issues found
@@ -72,9 +82,8 @@ Your response must match this EXACT schema:
 
 ### Severity Levels
 - **critical**: Immediately exploitable vulnerability (SQL injection, RCE, authentication bypass)
-- **high**: Significant security risk (XSS, authorization issues, sensitive data exposure)
-- **medium**: Security concern that should be fixed (weak crypto, missing validation)
-- **low**: Minor security improvement (better logging, code quality affecting security)
+- **high**: Significant security risk with a concrete exploit path (XSS, authorization issues, sensitive data exposure)
+- **medium**: Real security concern with a specific required fix (weak crypto, missing input validation on a trust boundary)
 
 ## Example Output
 
@@ -84,16 +93,16 @@ Your response must match this EXACT schema:
   "findings": [
     {
       "severity": "critical",
-      "title": "SQL Injection in user query",
-      "description": "Line 45: User input from `req.UserID` is directly concatenated into SQL query without sanitization. Use parameterized queries or an ORM to prevent SQL injection.",
+      "title": "SQL injection via unsanitized user input in query",
+      "description": "The `userID` value from the request is concatenated directly into the SQL string at line 45. This means any caller who controls that parameter can inject arbitrary SQL — for example, passing `' OR '1'='1` would return all users, and a more targeted payload could exfiltrate or destroy data. Parameterized queries pass the value separately from the query structure so the database never interprets it as SQL syntax.",
       "file": "handlers/user.go",
       "line": 45,
       "suggested_fix": "db.Query(\"SELECT * FROM users WHERE id = ?\", userID)"
     },
     {
       "severity": "high",
-      "title": "Hardcoded API key in config",
-      "description": "Line 12: API key 'sk-abc123...' is hardcoded in source code. Move to environment variables or secure secret management system.",
+      "title": "API key hardcoded in source",
+      "description": "The API key `sk-abc123...` at line 12 is checked into source code, which means it will appear in git history and any clone of the repository — including CI logs, forks, and any third-party tooling with repo access. Keys should be read from the environment or a secrets manager at runtime, so they're never stored in version control.",
       "file": "config/config.go",
       "line": 12,
       "suggested_fix": "apiKey := os.Getenv(\"API_KEY\")"
@@ -108,4 +117,5 @@ Your response must match this EXACT schema:
 - Always return valid JSON
 - Include at least a summary even if no findings
 - Be thorough but concise
-- Focus on actionable feedback
+- Only include findings where you can describe the specific exploit or harm
+- If uncertain, omit the finding
