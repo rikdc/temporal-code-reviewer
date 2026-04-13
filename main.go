@@ -251,8 +251,9 @@ func main() {
 // upsertPollerSchedule creates or updates the Temporal Schedule that drives
 // GitHub PR polling. It is idempotent — safe to call on every startup.
 //
-// The schedule runs every 15 minutes during business hours only:
-// Monday–Friday, 08:00–17:45 America/New_York (last fire at 17:45, done by 18:00).
+// The schedule cadence is controlled by cfg.Poller.Interval (interval_seconds in
+// config.yaml). It fires during business hours only: Monday–Friday, 08:00–17:59
+// America/New_York.
 func upsertPollerSchedule(ctx context.Context, temporalClient client.Client, cfg *config.Config, logger *zap.Logger) {
 	const scheduleID = "poll-github-prs"
 
@@ -261,11 +262,16 @@ func upsertPollerSchedule(ctx context.Context, temporalClient client.Client, cfg
 		AutoFixUsers: cfg.AutoFixUsers,
 	}
 
-	// Every 15 min, Mon–Fri, 08:00–17:59 ET.
+	stepMinutes := cfg.Poller.Interval / 60
+	if stepMinutes < 1 {
+		stepMinutes = 15 // default: 15 minutes
+	}
+
+	// Mon–Fri, 08:00–17:59 ET, firing every stepMinutes minutes.
 	spec := client.ScheduleSpec{
 		Calendars: []client.ScheduleCalendarSpec{
 			{
-				Minute:    []client.ScheduleRange{{Start: 0, End: 59, Step: 15}},
+				Minute:    []client.ScheduleRange{{Start: 0, End: 59, Step: stepMinutes}},
 				Hour:      []client.ScheduleRange{{Start: 8, End: 17}},
 				DayOfWeek: []client.ScheduleRange{{Start: 1, End: 5}}, // Mon=1, Fri=5
 			},
