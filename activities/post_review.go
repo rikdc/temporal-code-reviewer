@@ -7,7 +7,11 @@ import (
 	"strings"
 
 	"github.com/google/go-github/v68/github"
+	"github.com/google/uuid"
+	"github.com/rikdc/temporal-code-reviewer/metrics"
+	"github.com/rikdc/temporal-code-reviewer/reviews"
 	"github.com/rikdc/temporal-code-reviewer/types"
+	"go.temporal.io/sdk/activity"
 	"go.uber.org/zap"
 )
 
@@ -21,13 +25,16 @@ type agentFinding struct {
 // findings from all review agents. Line-specific findings are attached as
 // inline comments; all others appear in the review body.
 type PostReviewActivity struct {
-	client *github.Client
-	logger *zap.Logger
+	client      *github.Client
+	logger      *zap.Logger
+	store       *reviews.Store    // may be nil; when set, records each posted review
+	metricsRepo metrics.Repository // may be nil
 }
 
 // NewPostReviewActivity creates a new PostReviewActivity.
-func NewPostReviewActivity(client *github.Client, logger *zap.Logger) *PostReviewActivity {
-	return &PostReviewActivity{client: client, logger: logger}
+// store and metricsRepo may be nil if those features are not required.
+func NewPostReviewActivity(client *github.Client, logger *zap.Logger, store *reviews.Store, metricsRepo metrics.Repository) *PostReviewActivity {
+	return &PostReviewActivity{client: client, logger: logger, store: store, metricsRepo: metricsRepo}
 }
 
 // HasPendingReview returns true if a PENDING (draft) review already exists on
@@ -117,7 +124,8 @@ func (a *PostReviewActivity) PostReview(ctx context.Context, input types.PostRev
 	}
 
 	body := formatReviewBody(input.Summary, bodyFindings)
-	if err := a.createReview(ctx, input, body, lineComments); err != nil {
+	ghReview, err := a.createReview(ctx, input, body, lineComments)
+	if err != nil {
 		return fmt.Errorf("post GitHub review for PR #%d: %w", input.PRReviewInput.PRNumber, err)
 	}
 
@@ -127,7 +135,83 @@ func (a *PostReviewActivity) PostReview(ctx context.Context, input types.PostRev
 		zap.Int("inline_comments", len(lineComments)),
 		zap.Int("body_findings", len(bodyFindings)))
 
+	if a.store != nil {
+		a.store.Add(input)
+	}
+
+	if a.metricsRepo != nil {
+		workflowID := activity.GetInfo(ctx).WorkflowExecution.ID
+		a.saveMetrics(ctx, workflowID, input, ghReview.GetID())
+	}
+
 	return nil
+}
+
+// saveMetrics persists the review run and its findings to the metrics store.
+// Errors are logged but do not fail the activity.
+func (a *PostReviewActivity) saveMetrics(ctx context.Context, workflowID string, input types.PostReviewInput, githubReviewID int64) {
+	pr := input.PRReviewInput
+
+	if err := a.metricsRepo.SaveReviewRun(ctx, metrics.ReviewRun{
+		ID:             workflowID,
+		PRNumber:       pr.PRNumber,
+		RepoOwner:      pr.RepoOwner,
+		RepoName:       pr.RepoName,
+		HeadSHA:        pr.HeadSHA,
+		GitHubReviewID: githubReviewID,
+	}); err != nil {
+		a.logger.Warn("Failed to save review run", zap.Error(err))
+		return
+	}
+
+	// Fetch GitHub comment IDs so we can match deleted comments later.
+	ghComments, _, err := a.client.PullRequests.ListReviewComments(
+		ctx, pr.RepoOwner, pr.RepoName, pr.PRNumber, githubReviewID, nil,
+	)
+	if err != nil {
+		// Non-fatal: proceed with an empty map so findings are still recorded,
+		// but GitHubCommentID will be 0 (feedback correlation unavailable for this review).
+		a.logger.Warn("Failed to list review comments for metrics", zap.Error(err))
+	}
+
+	// Build a lookup: (file, line) → GitHub comment ID
+	type fileLineKey struct{ file string; line int }
+	commentIDs := make(map[fileLineKey]int64, len(ghComments))
+	for _, c := range ghComments {
+		commentIDs[fileLineKey{c.GetPath(), c.GetLine()}] = c.GetID()
+	}
+
+	var findingRecords []metrics.FindingRecord
+	for _, result := range input.AgentResults {
+		// Look up the agent_run UUID saved by ReviewAgent.Execute.
+		agentRunID, found, err := a.metricsRepo.GetAgentRunID(ctx, workflowID, result.AgentName)
+		if err != nil || !found {
+			a.logger.Warn("Agent run not found for findings; skipping",
+				zap.String("agent", result.AgentName), zap.Error(err))
+			continue
+		}
+		for _, f := range result.StructuredFindings {
+			if f.Title == "Raw LLM Response" {
+				continue
+			}
+			ghCommentID := commentIDs[fileLineKey{f.File, f.Line}]
+			findingRecords = append(findingRecords, metrics.FindingRecord{
+				ID:              uuid.New().String(),
+				AgentRunID:      agentRunID,
+				Severity:        f.Severity,
+				Title:           f.Title,
+				FilePath:        f.File,
+				LineNumber:      f.Line,
+				GitHubCommentID: ghCommentID,
+			})
+		}
+	}
+
+	if len(findingRecords) > 0 {
+		if err := a.metricsRepo.SaveFindings(ctx, findingRecords); err != nil {
+			a.logger.Warn("Failed to save findings", zap.Error(err))
+		}
+	}
 }
 
 // fetchDiffLines fetches the unified diff for a PR and returns a map of
@@ -238,7 +322,7 @@ func (a *PostReviewActivity) createReview(
 	input types.PostReviewInput,
 	body string,
 	comments []*github.DraftReviewComment,
-) error {
+) (*github.PullRequestReview, error) {
 	req := &github.PullRequestReviewRequest{
 		Body:     github.String(body),
 		Comments: comments,
@@ -248,14 +332,14 @@ func (a *PostReviewActivity) createReview(
 		req.CommitID = github.String(input.PRReviewInput.HeadSHA)
 	}
 
-	_, _, err := a.client.PullRequests.CreateReview(
+	review, _, err := a.client.PullRequests.CreateReview(
 		ctx,
 		input.PRReviewInput.RepoOwner,
 		input.PRReviewInput.RepoName,
 		input.PRReviewInput.PRNumber,
 		req,
 	)
-	return err
+	return review, err
 }
 
 // formatLineComment formats a single finding as a GitHub inline comment.

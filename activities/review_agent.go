@@ -6,9 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rikdc/temporal-code-reviewer/config"
 	"github.com/rikdc/temporal-code-reviewer/events"
 	"github.com/rikdc/temporal-code-reviewer/llm"
+	"github.com/rikdc/temporal-code-reviewer/metrics"
 	"github.com/rikdc/temporal-code-reviewer/types"
 	"go.temporal.io/sdk/activity"
 	"go.uber.org/zap"
@@ -23,23 +25,24 @@ type ReviewAgent struct {
 	Logger       *zap.Logger
 	LLMClient    llm.Reviewer
 	Config       *config.AgentConfig
-	PromptLoader *llm.PromptLoader
+	PromptSource llm.PromptSource
+	MetricsRepo  metrics.Repository // may be nil
 }
 
-func NewSecurityAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
-	return &ReviewAgent{Name: "Security", ReviewFocus: "security vulnerabilities", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptLoader: pl}
+func NewSecurityAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, ps llm.PromptSource, mr metrics.Repository) *ReviewAgent {
+	return &ReviewAgent{Name: "Security", ReviewFocus: "security vulnerabilities", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptSource: ps, MetricsRepo: mr}
 }
 
-func NewStyleAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
-	return &ReviewAgent{Name: "Style", ReviewFocus: "code style and quality", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptLoader: pl}
+func NewStyleAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, ps llm.PromptSource, mr metrics.Repository) *ReviewAgent {
+	return &ReviewAgent{Name: "Style", ReviewFocus: "code style and quality", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptSource: ps, MetricsRepo: mr}
 }
 
-func NewLogicAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
-	return &ReviewAgent{Name: "Logic", ReviewFocus: "logic errors and correctness issues", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptLoader: pl}
+func NewLogicAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, ps llm.PromptSource, mr metrics.Repository) *ReviewAgent {
+	return &ReviewAgent{Name: "Logic", ReviewFocus: "logic errors and correctness issues", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptSource: ps, MetricsRepo: mr}
 }
 
-func NewDocsAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *ReviewAgent {
-	return &ReviewAgent{Name: "Documentation", ReviewFocus: "documentation quality", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptLoader: pl}
+func NewDocsAgent(eb events.Publisher, l *zap.Logger, c llm.Reviewer, cfg *config.AgentConfig, ps llm.PromptSource, mr metrics.Repository) *ReviewAgent {
+	return &ReviewAgent{Name: "Documentation", ReviewFocus: "documentation quality", EventBus: eb, Logger: l, LLMClient: c, Config: cfg, PromptSource: ps, MetricsRepo: mr}
 }
 
 // Execute runs the LLM-powered review for this agent.
@@ -63,7 +66,7 @@ func (a *ReviewAgent) Execute(ctx context.Context, input types.AgentReviewInput)
 	activity.RecordHeartbeat(ctx, 20)
 	a.publishProgress(workflowID, 20)
 
-	systemPrompt, err := a.PromptLoader.Load(a.Config.PromptFile)
+	systemPrompt, promptVersionID, err := a.PromptSource.LoadForAgent(ctx, a.Name, a.Config.PromptFile)
 	if err != nil {
 		return a.handleError(workflowID, fmt.Errorf("load prompt: %w", err))
 	}
@@ -93,6 +96,7 @@ Analyze the code changes and return your findings in JSON format as specified in
 	activity.RecordHeartbeat(ctx, 60)
 	a.publishProgress(workflowID, 60)
 
+	llmStart := time.Now()
 	response, err := a.LLMClient.Review(ctx, llm.ReviewRequest{
 		AgentName:    a.Name,
 		Model:        a.Config.Model,
@@ -104,6 +108,7 @@ Analyze the code changes and return your findings in JSON format as specified in
 	if err != nil {
 		return a.handleError(workflowID, fmt.Errorf("llm review: %w", err))
 	}
+	llmLatencyMS := time.Since(llmStart).Milliseconds()
 
 	// Progress: 80% - Parse response
 	activity.RecordHeartbeat(ctx, 80)
@@ -127,6 +132,24 @@ Analyze the code changes and return your findings in JSON format as specified in
 	// Progress: 100% - Complete
 	activity.RecordHeartbeat(ctx, 100)
 	a.publishProgress(workflowID, 100)
+
+	if a.MetricsRepo != nil {
+		run := metrics.AgentRun{
+			ID:              uuid.New().String(),
+			ReviewRunID:     workflowID,
+			AgentName:       a.Name,
+			Status:          result.Status,
+			Model:           a.Config.Model,
+			InputTokens:     response.InputTokens,
+			OutputTokens:    response.OutputTokens,
+			LatencyMS:       llmLatencyMS,
+			FindingsCount:   len(result.StructuredFindings),
+			PromptVersionID: promptVersionID,
+		}
+		if err := a.MetricsRepo.SaveAgentRun(ctx, run); err != nil {
+			a.Logger.Warn("Failed to save agent run metrics", zap.Error(err))
+		}
+	}
 
 	a.EventBus.Publish(types.WorkflowEvent{
 		WorkflowID: workflowID,

@@ -17,4 +17,7 @@ const (
 	ActivityListOpenPRs      = "ListPRsActivity.ListOpenPRs"
 	ActivityPostReview       = "PostReviewActivity.PostReview"
 	ActivityHasPendingReview = "PostReviewActivity.HasPendingReview"
+	ActivityCheckFeedback    = "FeedbackPollerActivity.CheckFeedback"
+	ActivityHasReviewedAtSHA = "MetricsActivity.HasReviewedAtSHA"
+	ActivityRecordSkip       = "MetricsActivity.RecordSkip"
 )

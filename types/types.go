@@ -188,3 +188,18 @@ type PRReviewResult struct {
 	FixPRNumber int                `json:"fix_pr_number,omitempty"`
 	FixPRURL    string             `json:"fix_pr_url,omitempty"`
 }
+
+// FeedbackPollerInput is the input for FeedbackPollerWorkflow.
+type FeedbackPollerInput struct {
+	WorkflowID     string `json:"workflow_id"`      // parent review workflow ID
+	RepoOwner      string `json:"repo_owner"`
+	RepoName       string `json:"repo_name"`
+	PRNumber       int    `json:"pr_number"`
+	GitHubReviewID int64  `json:"github_review_id"`
+}
+
+// FeedbackPollResult is the output of ActivityCheckFeedback.
+type FeedbackPollResult struct {
+	PRClosed         bool `json:"pr_closed"`
+	DeletedComments  int  `json:"deleted_comments"`
+}

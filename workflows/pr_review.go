@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"github.com/rikdc/temporal-code-reviewer/activities"
 	"github.com/rikdc/temporal-code-reviewer/types"
 	"go.temporal.io/sdk/temporal"
@@ -172,6 +173,26 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		logger.Warn("Failed to post GitHub review — continuing", "error", err)
 	}
 
+	// Start the feedback poller immediately after posting the review so it
+	// runs regardless of whether triage, auto-fix, or any later phase succeeds
+	// or fails. The poller outlives the parent via PARENT_CLOSE_POLICY_ABANDON
+	// and is idempotent — Temporal silently rejects a duplicate start for the
+	// same workflow ID.
+	workflow.ExecuteChildWorkflow(
+		workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+			WorkflowID: fmt.Sprintf("feedback-poller-%s/%s#%d@%s",
+				input.RepoOwner, input.RepoName, input.PRNumber, input.HeadSHA),
+			ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
+		}),
+		FeedbackPollerWorkflow,
+		types.FeedbackPollerInput{
+			WorkflowID: workflow.GetInfo(ctx).WorkflowExecution.ID,
+			RepoOwner:  input.RepoOwner,
+			RepoName:   input.RepoName,
+			PRNumber:   input.PRNumber,
+		},
+	)
+
 	// Phase 4: Triage — classify each finding as auto-fixable or human-required
 	allFindings := flattenFindings(agentResults)
 	logger.Info("Starting triage", "findings_count", len(allFindings))
@@ -320,11 +341,18 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 // flattenFindings extracts typed findings from all agent results.
 // Uses StructuredFindings (which include File, Line, SuggestedFix) when
 // available, falling back to parsing formatted strings.
+// Parse-failure placeholders (Title == "Raw LLM Response") are excluded so
+// that downstream consumers (triage, metrics) never receive raw LLM output
+// masquerading as a structured finding.
 func flattenFindings(results []types.AgentResult) []types.Finding {
 	var findings []types.Finding
 	for _, r := range results {
 		if len(r.StructuredFindings) > 0 {
-			findings = append(findings, r.StructuredFindings...)
+			for _, f := range r.StructuredFindings {
+				if f.Title != "Raw LLM Response" {
+					findings = append(findings, f)
+				}
+			}
 			continue
 		}
 		// Fallback: parse formatted strings for older results

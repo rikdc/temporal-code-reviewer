@@ -20,17 +20,17 @@ type TriageAgent struct {
 	Logger       *zap.Logger
 	LLMClient    llm.Reviewer
 	Config       *config.AgentConfig
-	PromptLoader *llm.PromptLoader
+	PromptSource llm.PromptSource
 }
 
 // NewTriageAgent creates a new TriageAgent with the given dependencies.
-func NewTriageAgent(eb events.Publisher, logger *zap.Logger, client llm.Reviewer, cfg *config.AgentConfig, pl *llm.PromptLoader) *TriageAgent {
+func NewTriageAgent(eb events.Publisher, logger *zap.Logger, client llm.Reviewer, cfg *config.AgentConfig, ps llm.PromptSource) *TriageAgent {
 	return &TriageAgent{
 		EventBus:     eb,
 		Logger:       logger,
 		LLMClient:    client,
 		Config:       cfg,
-		PromptLoader: pl,
+		PromptSource: ps,
 	}
 }
 
@@ -66,7 +66,7 @@ func (a *TriageAgent) Execute(ctx context.Context, input types.TriageInput) ([]t
 	activity.RecordHeartbeat(ctx, 25)
 	a.publishProgress(workflowID, 25)
 
-	systemPrompt, err := a.PromptLoader.Load("triage.md")
+	systemPrompt, _, err := a.PromptSource.LoadForAgent(ctx, "Triage", a.Config.PromptFile)
 	if err != nil {
 		return nil, a.handleError(workflowID, fmt.Errorf("load triage prompt: %w", err))
 	}
