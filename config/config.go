@@ -9,7 +9,9 @@ import (
 
 // Config represents the complete application configuration
 type Config struct {
+	Provider     string           `yaml:"provider"` // "openrouter" (default) or "bedrock"
 	OpenRouter   OpenRouterConfig `yaml:"openrouter"`
+	Bedrock      BedrockConfig    `yaml:"bedrock"`
 	Temporal     TemporalConfig   `yaml:"temporal"`
 	Agents       AgentConfigs     `yaml:"agents"`
 	Poller       PollerConfig     `yaml:"poller"`
@@ -22,10 +24,6 @@ type TemporalConfig struct {
 	// For local dev, use a dedicated namespace (e.g. "code-reviewer") to reduce
 	// clutter in the Temporal UI.
 	Namespace string `yaml:"namespace"`
-	// DashboardBaseURL is the base URL of the Temporal UI used to build
-	// per-workflow links. Defaults to http://localhost:8081 if empty.
-	// Override with the TEMPORAL_UI_URL environment variable.
-	DashboardBaseURL string `yaml:"dashboard_base_url"`
 }
 
 // PollerConfig holds configuration for the GitHub PR polling background process
@@ -47,6 +45,12 @@ type PRFilters struct {
 	// RequireReviewerLogins, when non-empty, only allows PRs where at least one
 	// of the listed logins is a requested reviewer on the PR.
 	RequireReviewerLogins []string `yaml:"require_reviewer_logins"`
+}
+
+// BedrockConfig holds AWS Bedrock configuration
+type BedrockConfig struct {
+	Region  string `yaml:"region"`
+	Timeout int    `yaml:"timeout"`
 }
 
 // OpenRouterConfig holds OpenRouter API configuration
@@ -87,15 +91,15 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	// Allow env var override (for local dev and security)
+	// Allow env var overrides
 	if envKey := os.Getenv("OPENROUTER_API_KEY"); envKey != "" {
 		cfg.OpenRouter.APIKey = envKey
 	}
-	if uiURL := os.Getenv("TEMPORAL_UI_URL"); uiURL != "" {
-		cfg.Temporal.DashboardBaseURL = uiURL
+	if envProvider := os.Getenv("LLM_PROVIDER"); envProvider != "" {
+		cfg.Provider = envProvider
 	}
-	if cfg.Temporal.DashboardBaseURL == "" {
-		cfg.Temporal.DashboardBaseURL = "http://localhost:8081"
+	if envRegion := os.Getenv("AWS_REGION"); envRegion != "" {
+		cfg.Bedrock.Region = envRegion
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -107,14 +111,26 @@ func Load(path string) (*Config, error) {
 
 // Validate checks that the configuration is complete and valid
 func (c *Config) Validate() error {
-	if c.OpenRouter.APIKey == "" {
-		return fmt.Errorf("openrouter.api_key required (set OPENROUTER_API_KEY env var)")
-	}
-	if c.OpenRouter.BaseURL == "" {
-		return fmt.Errorf("openrouter.base_url required")
-	}
-	if c.OpenRouter.Timeout <= 0 {
-		return fmt.Errorf("openrouter.timeout must be positive")
+	switch c.Provider {
+	case "openrouter", "":
+		if c.OpenRouter.APIKey == "" {
+			return fmt.Errorf("openrouter.api_key required (set OPENROUTER_API_KEY env var)")
+		}
+		if c.OpenRouter.BaseURL == "" {
+			return fmt.Errorf("openrouter.base_url required")
+		}
+		if c.OpenRouter.Timeout <= 0 {
+			return fmt.Errorf("openrouter.timeout must be positive")
+		}
+	case "bedrock":
+		if c.Bedrock.Region == "" {
+			return fmt.Errorf("bedrock.region required (set AWS_REGION env var)")
+		}
+		if c.Bedrock.Timeout <= 0 {
+			return fmt.Errorf("bedrock.timeout must be positive")
+		}
+	default:
+		return fmt.Errorf("unsupported provider: %q (use \"openrouter\" or \"bedrock\")", c.Provider)
 	}
 
 	// Validate agent configurations

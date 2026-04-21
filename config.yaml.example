@@ -1,3 +1,9 @@
+provider: openrouter  # "openrouter" or "bedrock" (override with LLM_PROVIDER env var)
+
+bedrock:
+  region: "us-west-2"  # override with AWS_REGION env var
+  timeout: 120
+
 openrouter:
   api_key: ""  # Set via OPENROUTER_API_KEY env var
   base_url: "https://openrouter.ai/api/v1"

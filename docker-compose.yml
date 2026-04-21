@@ -62,8 +62,17 @@ services:
         condition: service_healthy
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      # Provider selection — CONFIG_FILE picks the right model IDs
+      - CONFIG_FILE=${CONFIG_FILE:-config.yaml}
+      # OpenRouter credentials (when using openrouter provider)
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      # AWS auth — profile-based via mounted ~/.aws (when using bedrock provider)
+      - AWS_PROFILE=${AWS_PROFILE:-}
+      - AWS_REGION=${AWS_REGION:-}
+    volumes:
+      # Mount host AWS config for SSO/profile-based auth
+      - ${HOME}/.aws:/root/.aws:ro
     ports:
       - "8081:8081"  # Dashboard
       - "8082:8082"  # Webhook

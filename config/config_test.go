@@ -543,6 +543,64 @@ func TestValidate(t *testing.T) {
 			wantErr:     true,
 			errContains: "api_key required",
 		},
+		{
+			name: "valid bedrock config",
+			config: Config{
+				Provider: "bedrock",
+				Bedrock: BedrockConfig{
+					Region:  "us-east-1",
+					Timeout: 120,
+				},
+				Agents: AgentConfigs{
+					Security:      AgentConfig{Model: "us.anthropic.claude-sonnet-4-20250514-v1:0", MaxTokens: 2000, Temperature: 0.3, PromptFile: "security.md"},
+					Style:         AgentConfig{Model: "us.anthropic.claude-3-5-haiku-20241022-v1:0", MaxTokens: 1500, Temperature: 0.5, PromptFile: "style.md"},
+					Logic:         AgentConfig{Model: "us.anthropic.claude-sonnet-4-20250514-v1:0", MaxTokens: 2000, Temperature: 0.3, PromptFile: "logic.md"},
+					Documentation: AgentConfig{Model: "us.anthropic.claude-3-5-haiku-20241022-v1:0", MaxTokens: 1500, Temperature: 0.5, PromptFile: "documentation.md"},
+					Triage:        AgentConfig{Model: "us.anthropic.claude-sonnet-4-20250514-v1:0", MaxTokens: 2000, Temperature: 0.2, PromptFile: "triage.md"},
+					FixGenerator:  AgentConfig{Model: "us.anthropic.claude-haiku-4-5-20241022-v1:0", MaxTokens: 2000, Temperature: 0.1},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "bedrock missing region",
+			config: Config{
+				Provider: "bedrock",
+				Bedrock:  BedrockConfig{Region: "", Timeout: 120},
+			},
+			wantErr:     true,
+			errContains: "bedrock.region required",
+		},
+		{
+			name: "bedrock invalid timeout",
+			config: Config{
+				Provider: "bedrock",
+				Bedrock:  BedrockConfig{Region: "us-east-1", Timeout: 0},
+			},
+			wantErr:     true,
+			errContains: "bedrock.timeout must be positive",
+		},
+		{
+			name: "unknown provider",
+			config: Config{
+				Provider: "azure",
+			},
+			wantErr:     true,
+			errContains: "unsupported provider",
+		},
+		{
+			name: "empty provider defaults to openrouter validation",
+			config: Config{
+				Provider: "",
+				OpenRouter: OpenRouterConfig{
+					APIKey:  "",
+					BaseURL: "https://openrouter.ai/api/v1",
+					Timeout: 30,
+				},
+			},
+			wantErr:     true,
+			errContains: "api_key required",
+		},
 	}
 
 	for _, tt := range tests {

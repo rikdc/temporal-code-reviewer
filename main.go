@@ -43,18 +43,24 @@ func main() {
 	logger.Info("Starting Temporal Code Review Service")
 
 	// Load configuration
-	logger.Info("Loading configuration from config.yaml")
-	cfg, err := config.Load("config.yaml")
+	configFile := os.Getenv("CONFIG_FILE")
+	if configFile == "" {
+		configFile = "config.yaml"
+	}
+	logger.Info("Loading configuration", zap.String("file", configFile))
+	cfg, err := config.Load(configFile)
 	if err != nil {
 		logger.Fatal("Failed to load config", zap.Error(err))
 	}
 	logger.Info("Configuration loaded successfully",
-		zap.String("openrouter_url", cfg.OpenRouter.BaseURL),
-		zap.Bool("api_key_set", cfg.OpenRouter.APIKey != ""))
+		zap.String("provider", cfg.Provider))
 
 	// Initialize LLM client
-	logger.Info("Initializing OpenRouter LLM client")
-	llmClient := llm.NewClient(&cfg.OpenRouter, logger)
+	logger.Info("Initializing LLM client", zap.String("provider", cfg.Provider))
+	llmClient, err := llm.NewReviewer(cfg, logger)
+	if err != nil {
+		logger.Fatal("Failed to create LLM client", zap.Error(err))
+	}
 
 	// Initialize prompt loader (disk fallback)
 	promptLoader := llm.NewPromptLoader("prompts")

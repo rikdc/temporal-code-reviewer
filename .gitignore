@@ -83,3 +83,8 @@ database.json
 *.backup
 *.sql
 *.dump
+
+# Runtime config (may contain org-specific repos, credentials, etc.)
+config.*.yaml
+config.yaml
+!config.yaml.example
