@@ -224,3 +224,86 @@ func TestTriageAgent_Execute_MultipleFindings(t *testing.T) {
 	assert.True(t, decisions[1].AutoFixable)
 	assert.True(t, decisions[2].AutoFixable)
 }
+
+func TestTriageAgent_Execute_BareArrayResponse(t *testing.T) {
+	pub := new(mockPublisher)
+	pub.On("Publish", mock.AnythingOfType("types.WorkflowEvent")).Return()
+
+	// Some LLM providers return a bare array instead of the wrapper object.
+	reviewer := new(mockReviewer)
+	reviewer.On("Review", mock.Anything, mock.AnythingOfType("llm.ReviewRequest")).Return(&llm.ReviewResponse{
+		Content: `[
+			{
+				"finding_title": "Missing godoc",
+				"auto_fixable": true,
+				"reason": "Mechanical documentation addition",
+				"fix_instructions": "Add godoc comment"
+			}
+		]`,
+		Model:        "test-model",
+		InputTokens:  150,
+		OutputTokens: 80,
+	}, nil)
+
+	promptDir := t.TempDir()
+	require.NoError(t, writePromptFile(promptDir, "triage.md", "You are a triage agent."))
+
+	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2, PromptFile: "triage.md"}, llm.NewPromptLoader(promptDir))
+
+	env := newTestActivityEnv(t)
+	env.RegisterActivity(agent.Execute)
+
+	input := types.TriageInput{
+		PRReviewInput: types.PRReviewInput{PRNumber: 42, RepoOwner: "rikdc", RepoName: "service"},
+		Findings: []types.Finding{
+			{Severity: "low", Title: "Missing godoc", Description: "Exported func undocumented"},
+		},
+	}
+
+	val, err := env.ExecuteActivity(agent.Execute, input)
+	require.NoError(t, err)
+
+	var decisions []types.TriageDecision
+	require.NoError(t, val.Get(&decisions))
+
+	require.Len(t, decisions, 1)
+	assert.True(t, decisions[0].AutoFixable)
+}
+
+func TestTriageAgent_Execute_MarkdownFencedArrayResponse(t *testing.T) {
+	pub := new(mockPublisher)
+	pub.On("Publish", mock.AnythingOfType("types.WorkflowEvent")).Return()
+
+	// Some LLM providers wrap the JSON array in markdown fences.
+	reviewer := new(mockReviewer)
+	reviewer.On("Review", mock.Anything, mock.AnythingOfType("llm.ReviewRequest")).Return(&llm.ReviewResponse{
+		Content: "Here are the triage decisions:\n\n```json\n[\n\t{\n\t\t\"finding_title\": \"SQL Injection in user query\",\n\t\t\"auto_fixable\": false,\n\t\t\"reason\": \"Security vulnerability\",\n\t\t\"fix_instructions\": \"\"\n\t}\n]\n```",
+		Model:        "test-model",
+		InputTokens:  200,
+		OutputTokens: 100,
+	}, nil)
+
+	promptDir := t.TempDir()
+	require.NoError(t, writePromptFile(promptDir, "triage.md", "You are a triage agent."))
+
+	agent := NewTriageAgent(pub, zap.NewNop(), reviewer, &config.AgentConfig{Model: "test-model", MaxTokens: 1000, Temperature: 0.2, PromptFile: "triage.md"}, llm.NewPromptLoader(promptDir))
+
+	env := newTestActivityEnv(t)
+	env.RegisterActivity(agent.Execute)
+
+	input := types.TriageInput{
+		PRReviewInput: types.PRReviewInput{PRNumber: 42, RepoOwner: "rikdc", RepoName: "service"},
+		Findings: []types.Finding{
+			{Severity: "critical", Title: "SQL Injection in user query", Description: "User input directly in SQL"},
+		},
+	}
+
+	val, err := env.ExecuteActivity(agent.Execute, input)
+	require.NoError(t, err)
+
+	var decisions []types.TriageDecision
+	require.NoError(t, val.Get(&decisions))
+
+	require.Len(t, decisions, 1)
+	assert.False(t, decisions[0].AutoFixable)
+}

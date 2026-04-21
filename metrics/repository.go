@@ -24,6 +24,12 @@ type Repository interface {
 	// does not re-review the same PR+SHA.
 	RecordSkip(ctx context.Context, repoOwner, repoName string, prNumber int, headSHA string) error
 
+	// DeleteReviewRun removes dedup records so the poller will re-review the PR.
+	// Both review_runs and pr_skips are cleared (HasReviewedAtSHA queries both).
+	// If headSHA is non-empty only that SHA's records are removed; if empty, all
+	// records for the (owner, repo, prNumber) tuple are removed.
+	DeleteReviewRun(ctx context.Context, repoOwner, repoName string, prNumber int, headSHA string) error
+
 	// Agent runs
 	SaveAgentRun(ctx context.Context, r AgentRun) error
 	GetAgentRunID(ctx context.Context, workflowID, agentName string) (string, bool, error)

@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS feedback_events (
 	finding_id TEXT NOT NULL,
 	verdict    TEXT NOT NULL,
 	source     TEXT NOT NULL,
-	created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+	UNIQUE(finding_id, source)
 );
 
 CREATE TABLE IF NOT EXISTS pr_skips (
@@ -219,6 +220,43 @@ func (s *Store) RecordSkip(ctx context.Context, repoOwner, repoName string, prNu
 	return err
 }
 
+func (s *Store) DeleteReviewRun(ctx context.Context, repoOwner, repoName string, prNumber int, headSHA string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if headSHA != "" {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM review_runs WHERE repo_owner=? AND repo_name=? AND pr_number=? AND head_sha=?`,
+			repoOwner, repoName, prNumber, headSHA,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM pr_skips WHERE repo_owner=? AND repo_name=? AND pr_number=? AND head_sha=?`,
+			repoOwner, repoName, prNumber, headSHA,
+		); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM review_runs WHERE repo_owner=? AND repo_name=? AND pr_number=?`,
+			repoOwner, repoName, prNumber,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM pr_skips WHERE repo_owner=? AND repo_name=? AND pr_number=?`,
+			repoOwner, repoName, prNumber,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) SetGitHubReviewID(ctx context.Context, workflowID string, reviewID int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE review_runs SET github_review_id = ? WHERE id = ?`, reviewID, workflowID)
@@ -307,7 +345,7 @@ func (s *Store) GetFindingByCommentID(ctx context.Context, commentID int64) (met
 func (s *Store) SaveFeedback(ctx context.Context, f metrics.FeedbackEvent) error {
 	f.ID = ensureID(f.ID)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO feedback_events (id, finding_id, verdict, source) VALUES (?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO feedback_events (id, finding_id, verdict, source) VALUES (?, ?, ?, ?)`,
 		f.ID, f.FindingID, f.Verdict, f.Source,
 	)
 	return err

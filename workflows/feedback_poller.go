@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	feedbackPollInterval = 2 * time.Hour
-	feedbackMaxPolls     = 84 // ~7 days
+	feedbackPollInterval = 5 * time.Minute
+	feedbackMaxPolls     = 2016 // ~7 days
 )
 
 // FeedbackPollerWorkflow polls a PR every 2 hours, recording deleted review
