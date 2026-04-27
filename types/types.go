@@ -189,6 +189,12 @@ type PRReviewResult struct {
 	FixPRURL    string             `json:"fix_pr_url,omitempty"`
 }
 
+// PostReviewOutput is returned by the PostReview activity.
+type PostReviewOutput struct {
+	GitHubReviewID int64  `json:"github_review_id"`
+	ReviewBody     string `json:"review_body"`
+}
+
 // FeedbackPollerInput is the input for FeedbackPollerWorkflow.
 type FeedbackPollerInput struct {
 	WorkflowID     string `json:"workflow_id"`      // parent review workflow ID
@@ -196,10 +202,13 @@ type FeedbackPollerInput struct {
 	RepoName       string `json:"repo_name"`
 	PRNumber       int    `json:"pr_number"`
 	GitHubReviewID int64  `json:"github_review_id"`
+	ReviewBody     string `json:"review_body"` // body to restore after user submits the pending review
 }
 
 // FeedbackPollResult is the output of ActivityCheckFeedback.
 type FeedbackPollResult struct {
-	PRClosed         bool `json:"pr_closed"`
-	DeletedComments  int  `json:"deleted_comments"`
+	PRClosed        bool `json:"pr_closed"`
+	DeletedComments int  `json:"deleted_comments"`
+	ReactedComments int  `json:"reacted_comments"`
+	RepliedComments int  `json:"replied_comments"`
 }

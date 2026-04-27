@@ -15,8 +15,9 @@ type StructuredReview struct {
 }
 
 // extractJSON strips markdown fences then extracts the first complete JSON
-// object by brace counting. This handles LLMs that append explanatory text
-// after the JSON (e.g. "Human: ...") which would otherwise break Unmarshal.
+// value (object or array) by brace/bracket counting. This handles LLMs that
+// append explanatory text after the JSON (e.g. "Human: ...") or that return a
+// bare JSON array instead of a wrapper object.
 func extractJSON(content string) string {
 	// Strip markdown code fences first.
 	startIdx := strings.Index(content, "```json")
@@ -34,17 +35,26 @@ func extractJSON(content string) string {
 
 	content = strings.TrimSpace(content)
 
-	// Find the first '{' and walk to its matching '}', ignoring content in
-	// strings. This discards any trailing text the LLM appended after the JSON.
+	// Determine whether the outermost JSON value is an object or array by
+	// finding which opening delimiter appears first in the content.
 	objStart := strings.Index(content, "{")
-	if objStart == -1 {
+	arrStart := strings.Index(content, "[")
+
+	start := objStart
+	var openCh, closeCh rune = '{', '}'
+	if arrStart != -1 && (objStart == -1 || arrStart < objStart) {
+		start = arrStart
+		openCh, closeCh = '[', ']'
+	}
+
+	if start == -1 {
 		return content
 	}
 
 	depth := 0
 	inString := false
 	escaped := false
-	for i, ch := range content[objStart:] {
+	for i, ch := range content[start:] {
 		switch {
 		case escaped:
 			escaped = false
@@ -52,17 +62,17 @@ func extractJSON(content string) string {
 			escaped = true
 		case ch == '"':
 			inString = !inString
-		case !inString && ch == '{':
+		case !inString && ch == openCh:
 			depth++
-		case !inString && ch == '}':
+		case !inString && ch == closeCh:
 			depth--
 			if depth == 0 {
-				return strings.TrimSpace(content[objStart : objStart+i+1])
+				return strings.TrimSpace(content[start : start+i+1])
 			}
 		}
 	}
 
-	return strings.TrimSpace(content[objStart:])
+	return strings.TrimSpace(content[start:])
 }
 
 // parseStructuredReview attempts to parse the LLM response as structured JSON

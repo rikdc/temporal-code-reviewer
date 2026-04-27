@@ -165,11 +165,12 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		AgentResults:  agentResults,
 		Summary:       summary,
 	}
+	var postReviewOutput types.PostReviewOutput
 	if err := workflow.ExecuteActivity(
 		workflow.WithActivityOptions(ctx, postReviewOpts),
 		activities.ActivityPostReview,
 		postReviewInput,
-	).Get(ctx, nil); err != nil {
+	).Get(ctx, &postReviewOutput); err != nil {
 		logger.Warn("Failed to post GitHub review — continuing", "error", err)
 	}
 
@@ -186,10 +187,12 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		}),
 		FeedbackPollerWorkflow,
 		types.FeedbackPollerInput{
-			WorkflowID: workflow.GetInfo(ctx).WorkflowExecution.ID,
-			RepoOwner:  input.RepoOwner,
-			RepoName:   input.RepoName,
-			PRNumber:   input.PRNumber,
+			WorkflowID:     workflow.GetInfo(ctx).WorkflowExecution.ID,
+			RepoOwner:      input.RepoOwner,
+			RepoName:       input.RepoName,
+			PRNumber:       input.PRNumber,
+			GitHubReviewID: postReviewOutput.GitHubReviewID,
+			ReviewBody:     postReviewOutput.ReviewBody,
 		},
 	)
 

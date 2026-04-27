@@ -89,18 +89,21 @@ func PollPRsWorkflow(ctx workflow.Context, input types.PollPRsInput) error {
 			childID := fmt.Sprintf("pr-review/%s/%s/%d/%s",
 				pr.RepoOwner, pr.RepoName, pr.PRNumber, shortSHA)
 
-			// ALLOW_DUPLICATE_FAILED_ONLY means: if a workflow for this PR+SHA
-			// already completed successfully, do not start another one. Only
-			// failed runs are retried. Since the SHA is in the workflow ID, a
-			// new commit on the same PR gets a new ID and is always reviewed.
-			// If a workflow is currently running (started by a previous poll
-			// or the webhook) the start will error and we log and skip — the
-			// HasPendingReview check above handles that case too.
+			// ALLOW_DUPLICATE means Temporal will start a new execution for this
+			// workflow ID regardless of how the previous one ended. Deduplication
+			// is handled entirely by the metrics DB gate above: a review_run record
+			// blocks re-review; deleting it (via DELETE /api/reviews or force) is
+			// sufficient to allow a new run. Using ALLOW_DUPLICATE_FAILED_ONLY
+			// would create a permanent Temporal-level block even after DB records
+			// are cleared, breaking the force-re-review flow.
+			// If a workflow is currently RUNNING, Temporal rejects the start
+			// regardless of reuse policy — the HasPendingReview gate above catches
+			// that case first.
 			cwo := workflow.ChildWorkflowOptions{
 				WorkflowID:            childID,
 				TaskQueue:             "pr-review-queue",
 				ParentClosePolicy:     enumspb.PARENT_CLOSE_POLICY_ABANDON,
-				WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
+				WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 			}
 
 			f := workflow.ExecuteChildWorkflow(workflow.WithChildOptions(ctx, cwo), PRReviewWorkflow, pr)

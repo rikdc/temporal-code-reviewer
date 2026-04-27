@@ -111,7 +111,16 @@ Return a JSON object with a "decisions" array — one decision per finding.`,
 	cleaned := extractJSON(response.Content)
 	var llmResp triageLLMResponse
 	if err := json.Unmarshal([]byte(cleaned), &llmResp); err != nil {
-		return nil, a.handleError(workflowID, fmt.Errorf("parse triage response: %w", err))
+		// Some LLM providers return a bare decisions array without the wrapper object.
+		var decisions []triageLLMDecision
+		if arrErr := json.Unmarshal([]byte(cleaned), &decisions); arrErr != nil {
+			a.Logger.Error("Failed to parse triage response",
+				zap.String("workflow_id", workflowID),
+				zap.String("raw_response", response.Content),
+				zap.Error(err))
+			return nil, a.handleError(workflowID, fmt.Errorf("parse triage response: %w", err))
+		}
+		llmResp.Decisions = decisions
 	}
 
 	// Build a lookup from finding_title -> LLM decision

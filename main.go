@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -231,7 +232,7 @@ func main() {
 	)
 
 	// Register feedback poller activity and workflow
-	feedbackPollerActivity := activities.NewFeedbackPollerActivity(ghClient, metricsStore, logger)
+	feedbackPollerActivity := activities.NewFeedbackPollerActivity(ghClient, metricsStore, logger, reviewStore)
 	w.RegisterActivityWithOptions(
 		feedbackPollerActivity.CheckFeedback,
 		activity.RegisterOptions{Name: activities.ActivityCheckFeedback},
@@ -278,13 +279,16 @@ func main() {
 	// Start webhook server
 	logger.Info("Starting webhook server on :8082")
 	webhookHandler := webhook.NewHandler(temporalClient, logger, cfg.AutoFixUsers)
-	reviewsHandler := reviews.NewHandler(reviewStore, logger)
+	reviewsHandler := reviews.NewHandler(reviewStore, ghClient, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook/pr", webhookHandler.HandlePR)
 	mux.HandleFunc("/api/reviews", reviewsHandler.HandleList)
 	mux.HandleFunc("/api/reviews/stream", reviewsHandler.HandleStream)
+	mux.HandleFunc("/api/reviews/submit", reviewsHandler.HandleSubmit)
 	mux.HandleFunc("/api/reviews/skip", skipHandler(metricsStore, logger))
+	mux.HandleFunc("/api/reviews/delete", deleteReviewHandler(metricsStore, logger))
+	mux.HandleFunc("/api/reviews/force", forceReviewHandler(metricsStore, ghClient, temporalClient, logger))
 	mux.HandleFunc("/api/feedback", feedbackHandler(metricsStore, logger))
 	mux.HandleFunc("/api/metrics", metricsHandler(metricsStore, logger))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -389,6 +393,164 @@ func skipHandler(repo metrics.Repository, logger *zap.Logger) http.HandlerFunc {
 			zap.Int("pr_number", body.PRNumber),
 			zap.String("head_sha", body.HeadSHA))
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// deleteReviewHandler handles DELETE /api/reviews.
+// It clears the dedup records (review_runs + pr_skips) for a PR so the next
+// poller cycle will pick it up for re-review. Unlike /api/reviews/force it
+// does not immediately start a workflow.
+//
+// Body:
+//
+//	{
+//	  "repo_owner": "acme",
+//	  "repo_name":  "backend",
+//	  "pr_number":  42,
+//	  "head_sha":   "abc12345"  // optional; omit to clear all SHAs for the PR
+//	}
+//
+// Response 204 No Content.
+func deleteReviewHandler(repo metrics.Repository, logger *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			RepoOwner string `json:"repo_owner"`
+			RepoName  string `json:"repo_name"`
+			PRNumber  int    `json:"pr_number"`
+			HeadSHA   string `json:"head_sha"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if body.RepoOwner == "" || body.RepoName == "" || body.PRNumber == 0 {
+			http.Error(w, "repo_owner, repo_name, and pr_number are required", http.StatusBadRequest)
+			return
+		}
+		if err := repo.DeleteReviewRun(r.Context(), body.RepoOwner, body.RepoName, body.PRNumber, body.HeadSHA); err != nil {
+			logger.Error("Failed to delete review records", zap.Error(err))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		logger.Info("Review records cleared via API",
+			zap.String("repo", body.RepoOwner+"/"+body.RepoName),
+			zap.Int("pr_number", body.PRNumber),
+			zap.String("head_sha", body.HeadSHA))
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// forceReviewHandler handles POST /api/reviews/force.
+// It clears the dedup records for a PR and immediately starts a new
+// PRReviewWorkflow, bypassing both the metrics-DB gate and the GitHub
+// pending-review gate.
+//
+// Body:
+//
+//	{
+//	  "repo_owner": "acme",
+//	  "repo_name":  "backend",
+//	  "pr_number":  42,
+//	  "head_sha":   "abc12345"  // optional; resolved from GitHub if omitted
+//	}
+//
+// Response 200 JSON: {"workflow_id":"...","run_id":"...","head_sha":"..."}
+func forceReviewHandler(repo metrics.Repository, ghClient *github.Client, temporalClient client.Client, logger *zap.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			RepoOwner string `json:"repo_owner"`
+			RepoName  string `json:"repo_name"`
+			PRNumber  int    `json:"pr_number"`
+			HeadSHA   string `json:"head_sha"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if body.RepoOwner == "" || body.RepoName == "" || body.PRNumber == 0 {
+			http.Error(w, "repo_owner, repo_name, and pr_number are required", http.StatusBadRequest)
+			return
+		}
+
+		// Fetch full PR metadata from GitHub. When head_sha was not supplied we
+		// need the current HEAD; when it was supplied we still need title, diff
+		// URL, etc. for PRReviewInput. One API call covers both cases.
+		input := types.PRReviewInput{
+			PRNumber:  body.PRNumber,
+			RepoOwner: body.RepoOwner,
+			RepoName:  body.RepoName,
+			HeadSHA:   body.HeadSHA,
+		}
+		if ghClient != nil {
+			pr, _, err := ghClient.PullRequests.Get(r.Context(), body.RepoOwner, body.RepoName, body.PRNumber)
+			if err != nil {
+				logger.Error("Failed to fetch PR from GitHub", zap.Error(err))
+				http.Error(w, "failed to fetch PR from GitHub", http.StatusBadGateway)
+				return
+			}
+			if body.HeadSHA == "" {
+				input.HeadSHA = pr.GetHead().GetSHA()
+			}
+			input.Title = pr.GetTitle()
+			input.DiffURL = pr.GetDiffURL()
+			input.HeadBranch = pr.GetHead().GetRef()
+			input.BaseBranch = pr.GetBase().GetRef()
+			input.PRAuthor = pr.GetUser().GetLogin()
+		}
+		if input.HeadSHA == "" {
+			http.Error(w, "head_sha is required: GITHUB_TOKEN not configured", http.StatusBadRequest)
+			return
+		}
+
+		// Clear dedup records. Pass body.HeadSHA (possibly empty) so that when
+		// the caller omitted it we delete all records for the PR number, and when
+		// they supplied it we delete only that SHA's records.
+		if err := repo.DeleteReviewRun(r.Context(), body.RepoOwner, body.RepoName, body.PRNumber, body.HeadSHA); err != nil {
+			logger.Error("Failed to delete review run record", zap.Error(err))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		shortSHA := input.HeadSHA
+		if len(shortSHA) > 8 {
+			shortSHA = shortSHA[:8]
+		}
+		workflowID := fmt.Sprintf("pr-review/%s/%s/%d/%s", body.RepoOwner, body.RepoName, body.PRNumber, shortSHA)
+
+		// ALLOW_DUPLICATE so the workflow starts unconditionally even if a prior
+		// execution for the same ID already completed successfully.
+		run, err := temporalClient.ExecuteWorkflow(r.Context(), client.StartWorkflowOptions{
+			ID:                    workflowID,
+			TaskQueue:             "pr-review-queue",
+			WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+		}, workflows.PRReviewWorkflow, input)
+		if err != nil {
+			logger.Error("Failed to start force-review workflow", zap.Error(err))
+			http.Error(w, "failed to start workflow", http.StatusInternalServerError)
+			return
+		}
+
+		logger.Info("Force-review workflow started",
+			zap.String("workflow_id", workflowID),
+			zap.String("run_id", run.GetRunID()),
+			zap.String("repo", body.RepoOwner+"/"+body.RepoName),
+			zap.Int("pr_number", body.PRNumber),
+			zap.String("head_sha", input.HeadSHA))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"workflow_id": workflowID,
+			"run_id":      run.GetRunID(),
+			"head_sha":    input.HeadSHA,
+		})
 	}
 }
 

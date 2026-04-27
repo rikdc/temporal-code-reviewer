@@ -79,10 +79,10 @@ func (a *PostReviewActivity) HasPendingReview(ctx context.Context, input types.P
 // reference lines outside the diff are placed in the review body instead.
 // This prevents GitHub from rejecting the entire request with 422 when an
 // LLM-generated line number falls outside the changed hunks.
-func (a *PostReviewActivity) PostReview(ctx context.Context, input types.PostReviewInput) error {
+func (a *PostReviewActivity) PostReview(ctx context.Context, input types.PostReviewInput) (types.PostReviewOutput, error) {
 	if a.client == nil {
 		a.logger.Warn("Skipping GitHub review post — GITHUB_TOKEN not configured")
-		return nil
+		return types.PostReviewOutput{}, nil
 	}
 
 	if err := a.deleteStalePendingReviews(ctx, input.PRReviewInput); err != nil {
@@ -91,6 +91,7 @@ func (a *PostReviewActivity) PostReview(ctx context.Context, input types.PostRev
 			zap.Int("pr_number", input.PRReviewInput.PRNumber),
 			zap.Error(err))
 	}
+
 
 	// Pre-fetch valid diff lines so we can route findings correctly.
 	validLines, err := a.fetchDiffLines(ctx, input.PRReviewInput)
@@ -126,7 +127,7 @@ func (a *PostReviewActivity) PostReview(ctx context.Context, input types.PostRev
 	body := formatReviewBody(input.Summary, bodyFindings)
 	ghReview, err := a.createReview(ctx, input, body, lineComments)
 	if err != nil {
-		return fmt.Errorf("post GitHub review for PR #%d: %w", input.PRReviewInput.PRNumber, err)
+		return types.PostReviewOutput{}, fmt.Errorf("post GitHub review for PR #%d: %w", input.PRReviewInput.PRNumber, err)
 	}
 
 	a.logger.Info("Posted draft GitHub review",
@@ -136,7 +137,7 @@ func (a *PostReviewActivity) PostReview(ctx context.Context, input types.PostRev
 		zap.Int("body_findings", len(bodyFindings)))
 
 	if a.store != nil {
-		a.store.Add(input)
+		a.store.Add(input, ghReview.GetID(), body)
 	}
 
 	if a.metricsRepo != nil {
@@ -144,7 +145,10 @@ func (a *PostReviewActivity) PostReview(ctx context.Context, input types.PostRev
 		a.saveMetrics(ctx, workflowID, input, ghReview.GetID())
 	}
 
-	return nil
+	return types.PostReviewOutput{
+		GitHubReviewID: ghReview.GetID(),
+		ReviewBody:     body,
+	}, nil
 }
 
 // saveMetrics persists the review run and its findings to the metrics store.
@@ -326,8 +330,9 @@ func (a *PostReviewActivity) createReview(
 	req := &github.PullRequestReviewRequest{
 		Body:     github.String(body),
 		Comments: comments,
-		// Omitting Event creates a PENDING (draft) review the user submits manually.
 	}
+	// Omitting Event creates a PENDING (draft) review the user submits manually.
+	// The body is restored after submission by the feedback poller via UpdateReview.
 	if input.PRReviewInput.HeadSHA != "" {
 		req.CommitID = github.String(input.PRReviewInput.HeadSHA)
 	}
@@ -376,16 +381,13 @@ func formatLineComment(_ string, f types.Finding) string {
 func formatReviewBody(summary types.ReviewSummary, findings []agentFinding) string {
 	var sb strings.Builder
 
-	sb.WriteString("## Code Review\n\n")
-	fmt.Fprintf(&sb, "**Overall:** %s\n\n", summary.OverallStatus)
+	sb.WriteString("Hello! :wave: I'm A/B testing code review prompts and the comments from this PR are fully automated. They are non-blocking and you can ignore them. If you have time I would appreciate if you could react :+1: for good and :-1: for poor quality comments. Feel free to respond with comments as well - this will be fed back in to the prompt to improve. - Thanks, @rikdc.\n\n")
 
-	if summary.Summary != "" {
-		sb.WriteString(humanizeText(summary.Summary))
-		sb.WriteString("\n\n")
+	sb.WriteString("Review Summary:\n")
+	for _, r := range summary.AgentResults {
+		fmt.Fprintf(&sb, "• %s: %s\n", r.AgentName, r.Status)
 	}
-	if summary.Recommendation != "" {
-		fmt.Fprintf(&sb, "**Recommendation:** %s\n\n", humanizeText(summary.Recommendation))
-	}
+	sb.WriteString("\n")
 
 	if len(findings) > 0 {
 		sb.WriteString("---\n\n### Additional findings\n\n")
