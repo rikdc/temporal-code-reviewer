@@ -28,8 +28,7 @@ WORKDIR /root/
 COPY --from=builder /app/lyon .
 
 # Copy config files, templates, static files, and prompts
-COPY --from=builder /app/config.yaml .
-COPY --from=builder /app/config.bedrock.yaml .
+COPY --from=builder /app/config*.yaml .
 COPY --from=builder /app/dashboard/templates ./dashboard/templates
 COPY --from=builder /app/dashboard/static ./dashboard/static
 COPY --from=builder /app/prompts ./prompts
