@@ -1,5 +1,5 @@
 openrouter:
-  api_key: ""  # Set via OPENROUTER_API_KEY env var
+  api_key: ""  # Set via OPENROUTER_API_KEY env var or api_key_file
   base_url: "https://openrouter.ai/api/v1"
   timeout: 120
 
@@ -8,22 +8,44 @@ auto_fix_users: []
 #   - your-github-login
 
 temporal:
-  namespace: "code-reviewer"  # use a dedicated namespace locally to reduce UI clutter
-  dashboard_base_url: ""  # Temporal UI base URL; overridden by TEMPORAL_UI_URL env var. Defaults to http://localhost:8081
+  namespace: "code-reviewer"
+  dashboard_base_url: ""
+
+server:
+  bind_address: "127.0.0.1:8082"
+  dashboard_address: "127.0.0.1:8081"
+  read_timeout: 30
+  write_timeout: 60
+  idle_timeout: 120
+  max_header_bytes: 1048576  # 1MB
+  max_body_bytes: 2097152    # 2MB
+
+webhook:
+  enabled: false
+  secret: ""       # Set via WEBHOOK_SECRET env var or secret_file
+  allowed_repos: []
+  # allowed_repos:
+  #   - owner/repo-name
+  max_body_bytes: 2097152  # 2MB
+  allowed_actions:
+    - opened
+    - synchronize
+    - reopened
+
+admin:
+  token: ""       # Set via ADMIN_API_TOKEN env var or token_file
 
 poller:
   enabled: false
-  interval_seconds: 900  # 15 minutes
+  interval_seconds: 7200  # 2 hours (was 15 minutes)
   repos: []
   # repos:
   #   - owner/repo-name
   filters:
-    max_age_days: 5         # skip PRs older than this; 0 = no limit
-    skip_drafts: true       # skip draft PRs
-    skip_bots: true         # skip PRs authored by GitHub bot accounts (e.g. dependabot)
+    max_age_days: 5
+    skip_drafts: true
+    skip_bots: true
     require_reviewer_logins: []
-    # require_reviewer_logins:
-    #   - your-github-login  # only review PRs where you are a requested reviewer
 
 agents:
   security:

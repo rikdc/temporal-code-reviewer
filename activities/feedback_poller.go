@@ -10,8 +10,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// FeedbackPollerActivity checks which of our review comments still exist on
-// GitHub and records deleted ones as implicit false-positive feedback.
+// FeedbackPollerActivity records raw feedback observations from GitHub.
+// It does NOT interpret signals as ground truth labels.
 type FeedbackPollerActivity struct {
 	client      *github.Client
 	metricsRepo metrics.Repository
@@ -19,22 +19,21 @@ type FeedbackPollerActivity struct {
 	store       *reviews.Store // may be nil
 }
 
-// NewFeedbackPollerActivity creates a new FeedbackPollerActivity.
-// store may be nil if dashboard state tracking is not required.
 func NewFeedbackPollerActivity(client *github.Client, repo metrics.Repository, logger *zap.Logger, store *reviews.Store) *FeedbackPollerActivity {
 	return &FeedbackPollerActivity{client: client, metricsRepo: repo, logger: logger, store: store}
 }
 
 // CheckFeedback fetches the current state of the PR and its review comments,
-// then records implicit feedback from three signals:
-//
-//   - Deleted comments → fp (github_deleted)
-//   - Reactions (+1/heart/hooray/rocket → tp; -1/confused → fp) (github_reaction)
-//   - Replies to our comments → tp (github_reply)
-//
-// Returns PRClosed=true when the PR is merged or closed, signalling the
-// polling loop to stop. Uses INSERT OR IGNORE so repeated polls are idempotent.
+// recording raw observations. It does NOT assign verdicts (tp/fp) based on
+// these signals — that interpretation is deferred to a future learning system.
 func (a *FeedbackPollerActivity) CheckFeedback(ctx context.Context, input types.FeedbackPollerInput) (types.FeedbackPollResult, error) {
+	if a.client == nil {
+		return types.FeedbackPollResult{}, nil
+	}
+	if input.GitHubReviewID == 0 {
+		return types.FeedbackPollResult{}, nil
+	}
+
 	pr, _, err := a.client.PullRequests.Get(ctx, input.RepoOwner, input.RepoName, input.PRNumber)
 	if err != nil {
 		a.logger.Warn("Could not fetch PR state for feedback poll",
@@ -46,15 +45,7 @@ func (a *FeedbackPollerActivity) CheckFeedback(ctx context.Context, input types.
 		return types.FeedbackPollResult{PRClosed: true}, nil
 	}
 
-	if input.GitHubReviewID == 0 {
-		return types.FeedbackPollResult{}, nil
-	}
-
-	// Restore the review body if the user has submitted the pending review via
-	// the GitHub UI. The GitHub "Finish your review" dialog always submits with
-	// an empty body, overwriting the body we set when creating the review.
-	// PUT /reviews/{review_id} works on submitted reviews, so we use it to
-	// restore the body on the first poll after submission.
+	// Restore review body if user submitted via GitHub UI with empty body
 	if input.ReviewBody != "" {
 		review, _, err := a.client.PullRequests.GetReview(ctx, input.RepoOwner, input.RepoName, input.PRNumber, input.GitHubReviewID)
 		if err != nil {
@@ -72,7 +63,7 @@ func (a *FeedbackPollerActivity) CheckFeedback(ctx context.Context, input types.
 		}
 	}
 
-	// Fetch comments still present on our review.
+	// Fetch comments still present on our review
 	liveComments, _, err := a.client.PullRequests.ListReviewComments(
 		ctx, input.RepoOwner, input.RepoName, input.PRNumber, input.GitHubReviewID, nil,
 	)
@@ -87,7 +78,7 @@ func (a *FeedbackPollerActivity) CheckFeedback(ctx context.Context, input types.
 		liveIDs[c.GetID()] = true
 	}
 
-	// Fetch all PR review comments to find replies to our comments.
+	// Fetch all PR review comments to find replies to our comments
 	allComments, _, err := a.client.PullRequests.ListComments(
 		ctx, input.RepoOwner, input.RepoName, input.PRNumber, nil,
 	)
@@ -115,20 +106,20 @@ func (a *FeedbackPollerActivity) CheckFeedback(ctx context.Context, input types.
 		}
 
 		if !liveIDs[f.GitHubCommentID] {
-			// Comment was deleted — implicit false positive.
+			// Comment was deleted — record as raw observation (not a verdict)
 			if err := a.metricsRepo.SaveFeedback(ctx, metrics.FeedbackEvent{
 				FindingID: f.ID,
-				Verdict:   metrics.VerdictFP,
+				Verdict:   "observation:comment_deleted",
 				Source:    "github_deleted",
 			}); err != nil {
-				a.logger.Warn("Failed to save implicit feedback", zap.String("finding_id", f.ID), zap.Error(err))
+				a.logger.Warn("Failed to save observation", zap.String("finding_id", f.ID), zap.Error(err))
 			} else {
 				deleted++
 			}
 			continue
 		}
 
-		// Comment is still live — check reactions.
+		// Check reactions — record as raw observations
 		reactions, _, err := a.client.Reactions.ListPullRequestCommentReactions(
 			ctx, input.RepoOwner, input.RepoName, f.GitHubCommentID, nil,
 		)
@@ -136,31 +127,30 @@ func (a *FeedbackPollerActivity) CheckFeedback(ctx context.Context, input types.
 			a.logger.Warn("Could not fetch reactions", zap.Int64("comment_id", f.GitHubCommentID), zap.Error(err))
 		} else {
 			for _, r := range reactions {
-				verdict := reactionVerdict(r.GetContent())
-				if verdict == "" {
+				obs := reactionObservation(r.GetContent())
+				if obs == "" {
 					continue
 				}
 				if err := a.metricsRepo.SaveFeedback(ctx, metrics.FeedbackEvent{
 					FindingID: f.ID,
-					Verdict:   verdict,
+					Verdict:   obs,
 					Source:    "github_reaction",
 				}); err != nil {
-					a.logger.Warn("Failed to save reaction feedback", zap.String("finding_id", f.ID), zap.Error(err))
+					a.logger.Warn("Failed to save reaction observation", zap.String("finding_id", f.ID), zap.Error(err))
 				} else {
 					reacted++
 				}
-				break // first meaningful reaction wins; INSERT OR IGNORE handles subsequent polls
 			}
 		}
 
-		// Check for replies.
+		// Check for replies — record as raw observation
 		if repliedIDs[f.GitHubCommentID] {
 			if err := a.metricsRepo.SaveFeedback(ctx, metrics.FeedbackEvent{
 				FindingID: f.ID,
-				Verdict:   metrics.VerdictTP,
+				Verdict:   "observation:replied",
 				Source:    "github_reply",
 			}); err != nil {
-				a.logger.Warn("Failed to save reply feedback", zap.String("finding_id", f.ID), zap.Error(err))
+				a.logger.Warn("Failed to save reply observation", zap.String("finding_id", f.ID), zap.Error(err))
 			} else {
 				replied++
 			}
@@ -168,7 +158,7 @@ func (a *FeedbackPollerActivity) CheckFeedback(ctx context.Context, input types.
 	}
 
 	if deleted+reacted+replied > 0 {
-		a.logger.Info("Recorded implicit feedback from GitHub signals",
+		a.logger.Info("Recorded raw feedback observations from GitHub signals",
 			zap.Int("pr_number", input.PRNumber),
 			zap.Int("deleted", deleted),
 			zap.Int("reacted", reacted),
@@ -182,8 +172,6 @@ func (a *FeedbackPollerActivity) CheckFeedback(ctx context.Context, input types.
 	}, nil
 }
 
-// cleanupClosedPR deletes the pending GitHub review (if any) and marks the
-// review record as closed in the dashboard store.
 func (a *FeedbackPollerActivity) cleanupClosedPR(ctx context.Context, input types.FeedbackPollerInput) {
 	if input.GitHubReviewID != 0 {
 		review, _, err := a.client.PullRequests.GetReview(ctx, input.RepoOwner, input.RepoName, input.PRNumber, input.GitHubReviewID)
@@ -198,10 +186,6 @@ func (a *FeedbackPollerActivity) cleanupClosedPR(ctx context.Context, input type
 					zap.Int("pr_number", input.PRNumber),
 					zap.Int64("review_id", input.GitHubReviewID),
 					zap.Error(err))
-			} else {
-				a.logger.Info("Deleted pending review on PR close",
-					zap.Int("pr_number", input.PRNumber),
-					zap.Int64("review_id", input.GitHubReviewID))
 			}
 		}
 	}
@@ -211,16 +195,22 @@ func (a *FeedbackPollerActivity) cleanupClosedPR(ctx context.Context, input type
 	}
 }
 
-// reactionVerdict maps a GitHub reaction content string to a feedback verdict.
-// +1/heart/hooray/rocket are treated as true-positive signals (user agrees with
-// the finding); -1/confused as false-positive signals (user disagrees).
-// All other reactions are ignored.
-func reactionVerdict(content string) string {
+// reactionObservation maps a GitHub reaction content to a raw observation string.
+// These are NOT verdicts — they are raw observations for future analysis.
+func reactionObservation(content string) string {
 	switch content {
-	case "+1", "heart", "hooray", "rocket":
-		return metrics.VerdictTP
-	case "-1", "confused":
-		return metrics.VerdictFP
+	case "+1":
+		return "observation:reaction_plus1"
+	case "-1":
+		return "observation:reaction_minus1"
+	case "heart":
+		return "observation:reaction_heart"
+	case "hooray":
+		return "observation:reaction_hooray"
+	case "rocket":
+		return "observation:reaction_rocket"
+	case "confused":
+		return "observation:reaction_confused"
 	default:
 		return ""
 	}

@@ -13,7 +13,6 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-// Search attribute keys used for filtering PR review workflows in the Temporal UI.
 var (
 	searchAttrRepository = temporal.NewSearchAttributeKeyString("Repository")
 	searchAttrPRAuthor   = temporal.NewSearchAttributeKeyString("PRAuthor")
@@ -29,41 +28,40 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 	logger := workflow.GetLogger(ctx)
 	logger.Info("PR review workflow started", "pr_number", input.PRNumber)
 
-	// Tag each execution with repo and author for easy filtering in the Temporal UI.
-	// These custom attributes must be registered in the namespace before use:
-	//   temporal operator search-attribute create --namespace code-reviewer \
-	//     --name Repository --type Text
-	//   temporal operator search-attribute create --namespace code-reviewer \
-	//     --name PRAuthor --type Text
 	_ = workflow.UpsertTypedSearchAttributes(ctx,
 		searchAttrRepository.ValueSet(fmt.Sprintf("%s/%s", input.RepoOwner, input.RepoName)),
 		searchAttrPRAuthor.ValueSet(input.PRAuthor),
 	)
 
-	// Configure activity options with 90s timeout for LLM calls
 	ao := workflow.ActivityOptions{
 		StartToCloseTimeout: 90 * time.Second,
-		HeartbeatTimeout:    30 * time.Second, // LLM calls can take 10-20s
+		HeartbeatTimeout:    30 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
 			MaximumAttempts: 3,
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 
-	// Phase 0: Fetch diff content (cached)
+	// Phase 0: Fetch diff content with coverage tracking
 	logger.Info("Fetching PR diff", "diff_url", input.DiffURL)
 
-	var diffContent string
-	err := workflow.ExecuteActivity(ctx, activities.ActivityDiffFetcher, input.DiffURL).Get(ctx, &diffContent)
+	var diffResult activities.DiffFetchResult
+	err := workflow.ExecuteActivity(ctx, activities.ActivityDiffFetcher, activities.DiffFetchInput{
+		DiffURL:   input.DiffURL,
+		RepoOwner: input.RepoOwner,
+		RepoName:  input.RepoName,
+		PRNumber:  input.PRNumber,
+	}).Get(ctx, &diffResult)
 	if err != nil {
 		logger.Error("Diff fetch failed", "error", err)
 		return nil, err
 	}
 
-	logger.Info("Diff fetched successfully", "size", len(diffContent))
+	diffContent := diffResult.Content
+	coverage := diffResult.Coverage
+	logger.Info("Diff fetched successfully", "size", len(diffContent), "truncated", coverage.Truncated)
 
 	// Resolve head SHA if the webhook didn't provide it.
-	// The SHA is required for reading files at the correct commit during auto-fix.
 	if input.HeadSHA == "" {
 		shaOpts := workflow.ActivityOptions{
 			StartToCloseTimeout: 15 * time.Second,
@@ -75,14 +73,13 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 			activities.ActivityGetPRHeadSHA,
 			input.RepoOwner, input.RepoName, input.PRNumber,
 		).Get(ctx, &sha); err != nil {
-			logger.Warn("Could not resolve PR head SHA; file reads will use branch name as fallback", "error", err)
+			logger.Warn("Could not resolve PR head SHA", "error", err)
 		} else {
 			input.HeadSHA = sha
 			logger.Info("Resolved PR head SHA", "sha", sha)
 		}
 	}
 
-	// Create AgentReviewInput with diff content
 	agentInput := types.AgentReviewInput{
 		PRReviewInput: input,
 		DiffContent:   diffContent,
@@ -91,30 +88,25 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 	// Phase 1: Launch 4 agents in parallel
 	logger.Info("Launching parallel review agents")
 
-	// Call activities by their full method names
 	securityFuture := workflow.ExecuteActivity(ctx, activities.ActivitySecurity, agentInput)
 	styleFuture := workflow.ExecuteActivity(ctx, activities.ActivityStyle, agentInput)
 	logicFuture := workflow.ExecuteActivity(ctx, activities.ActivityLogic, agentInput)
 	docsFuture := workflow.ExecuteActivity(ctx, activities.ActivityDocs, agentInput)
 
-	// Wait for all agents to complete
 	var securityResult, styleResult, logicResult, docsResult types.AgentResult
 
 	if err := securityFuture.Get(ctx, &securityResult); err != nil {
 		logger.Error("Security agent failed", "error", err)
 		return nil, err
 	}
-
 	if err := styleFuture.Get(ctx, &styleResult); err != nil {
 		logger.Error("Style agent failed", "error", err)
 		return nil, err
 	}
-
 	if err := logicFuture.Get(ctx, &logicResult); err != nil {
 		logger.Error("Logic agent failed", "error", err)
 		return nil, err
 	}
-
 	if err := docsFuture.Get(ctx, &docsResult); err != nil {
 		logger.Error("Docs agent failed", "error", err)
 		return nil, err
@@ -134,8 +126,6 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 	}
 
 	// Phase 2: Synthesis agent aggregates results
-	logger.Info("Starting synthesis agent")
-
 	synthesisInput := types.SynthesisInput{
 		PRReviewInput: input,
 		AgentResults:  agentResults,
@@ -148,12 +138,24 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		return nil, err
 	}
 
+	// Attach coverage to summary
+	summary.Coverage = coverage
+
+	// If the diff was truncated, the overall result MUST be incomplete, never approved.
+	if coverage.Truncated {
+		summary.OverallStatus = "incomplete"
+		summary.Recommendation = fmt.Sprintf(
+			"Review is incomplete: diff was truncated at %d bytes / %d lines. Omitted %d bytes / %d lines. %s",
+			coverage.TruncatedAtBytes, coverage.TruncatedAtLines,
+			coverage.OmittedBytes, coverage.OmittedLines,
+			coverage.OmissionReason)
+	}
+
 	logger.Info("Synthesis completed",
 		"pr_number", input.PRNumber,
 		"overall_status", summary.OverallStatus)
 
-	// Phase 3: Post draft GitHub review — non-fatal, workflow continues on failure.
-	// MaximumAttempts:1 prevents double-posting if the workflow is retried.
+	// Phase 3: Post draft GitHub review — non-fatal
 	postReviewOpts := workflow.ActivityOptions{
 		StartToCloseTimeout: 30 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -174,29 +176,27 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		logger.Warn("Failed to post GitHub review — continuing", "error", err)
 	}
 
-	// Start the feedback poller immediately after posting the review so it
-	// runs regardless of whether triage, auto-fix, or any later phase succeeds
-	// or fails. The poller outlives the parent via PARENT_CLOSE_POLICY_ABANDON
-	// and is idempotent — Temporal silently rejects a duplicate start for the
-	// same workflow ID.
-	workflow.ExecuteChildWorkflow(
-		workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-			WorkflowID: fmt.Sprintf("feedback-poller-%s/%s#%d@%s",
-				input.RepoOwner, input.RepoName, input.PRNumber, input.HeadSHA),
-			ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
-		}),
-		FeedbackPollerWorkflow,
-		types.FeedbackPollerInput{
-			WorkflowID:     workflow.GetInfo(ctx).WorkflowExecution.ID,
-			RepoOwner:      input.RepoOwner,
-			RepoName:       input.RepoName,
-			PRNumber:       input.PRNumber,
-			GitHubReviewID: postReviewOutput.GitHubReviewID,
-			ReviewBody:     postReviewOutput.ReviewBody,
-		},
-	)
+	// Start feedback poller only if we have a valid GitHub review ID and GitHub client
+	if postReviewOutput.GitHubReviewID != 0 {
+		workflow.ExecuteChildWorkflow(
+			workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+				WorkflowID: fmt.Sprintf("feedback-poller-%s/%s#%d@%s",
+					input.RepoOwner, input.RepoName, input.PRNumber, input.HeadSHA),
+				ParentClosePolicy: enumspb.PARENT_CLOSE_POLICY_ABANDON,
+			}),
+			FeedbackPollerWorkflow,
+			types.FeedbackPollerInput{
+				WorkflowID:     workflow.GetInfo(ctx).WorkflowExecution.ID,
+				RepoOwner:      input.RepoOwner,
+				RepoName:       input.RepoName,
+				PRNumber:       input.PRNumber,
+				GitHubReviewID: postReviewOutput.GitHubReviewID,
+				ReviewBody:     postReviewOutput.ReviewBody,
+			},
+		)
+	}
 
-	// Phase 4: Triage — classify each finding as auto-fixable or human-required
+	// Phase 4: Triage
 	allFindings := flattenFindings(agentResults)
 	logger.Info("Starting triage", "findings_count", len(allFindings))
 
@@ -204,9 +204,7 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		StartToCloseTimeout: 120 * time.Second,
 		HeartbeatTimeout:    30 * time.Second,
 		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 2,
-			// Do not retry parse failures — they indicate a deterministic LLM
-			// output problem (e.g. truncated JSON) that won't resolve on retry.
+			MaximumAttempts:           2,
 			NonRetryableErrorTypes: []string{"SyntaxError", "wrapError"},
 		},
 	}
@@ -221,7 +219,6 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		return nil, fmt.Errorf("triage failed: %w", err)
 	}
 
-	// Split decisions
 	var autoFixable, humanRequired []types.TriageDecision
 	for _, d := range triageDecisions {
 		if d.AutoFixable {
@@ -231,21 +228,20 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		}
 	}
 
-	logger.Info("Triage completed",
-		"auto_fixable", len(autoFixable),
-		"human_required", len(humanRequired))
-
-	// Phase 5: Fix fan-out — one child workflow per auto-fixable finding (only when caller opted in)
-	if !input.AutoFixEnabled {
-		logger.Info("Auto-fix disabled for this PR; skipping fix phases",
-			"pr_author", input.PRAuthor)
+	// Auto-fix is disabled when: caller opted out, OR coverage is incomplete.
+	if !input.AutoFixEnabled || coverage.Truncated {
+		reason := "auto-fix disabled for this PR"
+		if coverage.Truncated {
+			reason = "auto-fix disabled: review coverage is incomplete"
+		}
+		logger.Info(reason, "pr_author", input.PRAuthor)
 		return &types.PRReviewResult{
 			Summary: summary,
 			Triage:  triageDecisions,
 		}, nil
 	}
 
-	// (AutoFixEnabled == true from here down)
+	// Phase 5: Fix fan-out
 	var fixFutures []workflow.ChildWorkflowFuture
 	for _, decision := range autoFixable {
 		cwo := workflow.ChildWorkflowOptions{
@@ -266,7 +262,6 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		fixFutures = append(fixFutures, f)
 	}
 
-	// Collect fix results
 	var fixResults []types.FixResult
 	for _, f := range fixFutures {
 		var result types.FixResult
@@ -305,7 +300,6 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 		Changeset: changeset,
 	}
 
-	// Phase 7: PR creation — only if we have a branch to open against
 	if changeset.BranchName != "" {
 		createPROpts := workflow.ActivityOptions{
 			StartToCloseTimeout: 30 * time.Second,
@@ -325,7 +319,6 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 			HumanRequired:  humanRequired,
 		}
 		if err := workflow.ExecuteActivity(prCtx, activities.ActivityCreatePR, createPRInput).Get(ctx, &prResult); err != nil {
-			// Non-fatal: log and continue, workflow still returns triage results
 			logger.Warn("PR creation failed", "error", err)
 		} else {
 			result.FixPRNumber = prResult.PRNumber
@@ -341,12 +334,6 @@ func PRReviewWorkflow(ctx workflow.Context, input types.PRReviewInput) (*types.P
 	return result, nil
 }
 
-// flattenFindings extracts typed findings from all agent results.
-// Uses StructuredFindings (which include File, Line, SuggestedFix) when
-// available, falling back to parsing formatted strings.
-// Parse-failure placeholders (Title == "Raw LLM Response") are excluded so
-// that downstream consumers (triage, metrics) never receive raw LLM output
-// masquerading as a structured finding.
 func flattenFindings(results []types.AgentResult) []types.Finding {
 	var findings []types.Finding
 	for _, r := range results {
@@ -358,7 +345,6 @@ func flattenFindings(results []types.AgentResult) []types.Finding {
 			}
 			continue
 		}
-		// Fallback: parse formatted strings for older results
 		for _, f := range r.Findings {
 			if f == "" || strings.HasPrefix(f, "**Summary:**") || strings.HasPrefix(f, "#") {
 				continue
@@ -371,9 +357,7 @@ func flattenFindings(results []types.AgentResult) []types.Finding {
 	return findings
 }
 
-// parseFindingString attempts to parse a formatted finding string back into a Finding struct.
 func parseFindingString(s string) (types.Finding, bool) {
-	// Match pattern: emoji **[severity] Title**
 	matches := findingSeverityRe.FindStringSubmatch(s)
 	if len(matches) >= 3 {
 		return types.Finding{
@@ -382,16 +366,12 @@ func parseFindingString(s string) (types.Finding, bool) {
 			Description: s,
 		}, true
 	}
-
-	// Skip non-finding lines
 	if strings.HasPrefix(s, "✓") || strings.HasPrefix(s, "⚠️ Note:") {
 		return types.Finding{}, false
 	}
-
 	return types.Finding{}, false
 }
 
-// sanitise makes a string safe for use in a workflow ID.
 func sanitise(s string) string {
 	result := nonAlphanumRe.ReplaceAllString(s, "-")
 	if len(result) > 50 {

@@ -10,16 +10,16 @@ import (
 )
 
 const (
-	feedbackPollInterval = 5 * time.Minute
-	feedbackMaxPolls     = 2016 // ~7 days
+	defaultFeedbackPollInterval = 2 * time.Hour
+	feedbackMaxPolls            = 84 // 7 days at 2-hour intervals
 )
 
-// FeedbackPollerWorkflow polls a PR every 2 hours, recording deleted review
-// comments as implicit false-positive feedback, until the PR is closed/merged
+// FeedbackPollerWorkflow polls a PR at a configurable interval, recording raw
+// feedback observations from GitHub signals until the PR is closed/merged
 // or the safety limit is reached.
 //
-// It is started as a fire-and-forget child of PRReviewWorkflow with
-// PARENT_CLOSE_POLICY_ABANDON so it outlives the parent.
+// Feedback is stored as raw observations. The system does NOT interpret
+// reactions, replies, or deleted comments as ground truth labels.
 func FeedbackPollerWorkflow(ctx workflow.Context, input types.FeedbackPollerInput) error {
 	logger := workflow.GetLogger(ctx)
 	ao := workflow.ActivityOptions{
@@ -29,6 +29,8 @@ func FeedbackPollerWorkflow(ctx workflow.Context, input types.FeedbackPollerInpu
 		},
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
+
+	pollInterval := defaultFeedbackPollInterval
 
 	for i := 0; i < feedbackMaxPolls; i++ {
 		var result types.FeedbackPollResult
@@ -41,7 +43,7 @@ func FeedbackPollerWorkflow(ctx workflow.Context, input types.FeedbackPollerInpu
 		}
 
 		if i < feedbackMaxPolls-1 {
-			workflow.Sleep(ctx, feedbackPollInterval)
+			workflow.Sleep(ctx, pollInterval)
 		}
 	}
 

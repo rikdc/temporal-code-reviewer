@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestApplyDiffBestEffort_NonOverlappingDiffs(t *testing.T) {
+func TestApplyPatch_Simple(t *testing.T) {
 	original := `package main
 
 import "fmt"
@@ -18,32 +18,25 @@ func main() {
 	fmt.Println("world")
 }
 `
-	// A simple diff adding a line
-	diff := `--- a/main.go
+	patch, err := ParsePatch(`--- a/main.go
 +++ b/main.go
 @@ -5,3 +5,4 @@
  func main() {
  	fmt.Println("hello")
 +	fmt.Println("inserted")
  	fmt.Println("world")
-`
-
-	result := applyDiffBestEffort(original, diff)
+`)
+	assert.NoError(t, err)
+	result, err := ApplyPatch(original, patch)
+	assert.NoError(t, err)
 	assert.Contains(t, result, "inserted")
 	assert.Contains(t, result, "hello")
 	assert.Contains(t, result, "world")
 }
 
-func TestApplyDiffBestEffort_EmptyDiff(t *testing.T) {
-	original := "package main\n"
-	result := applyDiffBestEffort(original, "")
-	assert.Equal(t, original, result, "empty diff should return original")
-}
-
-func TestApplyDiffBestEffort_InvalidDiff(t *testing.T) {
-	original := "package main\nfunc main() {}\n"
-	result := applyDiffBestEffort(original, "not a diff at all")
-	assert.Equal(t, original, result, "invalid diff should return original")
+func TestApplyPatch_EmptyPatch(t *testing.T) {
+	_, err := ParsePatch("")
+	assert.Error(t, err, "empty diff should fail to parse")
 }
 
 func TestBuildPRBody_AllSections(t *testing.T) {

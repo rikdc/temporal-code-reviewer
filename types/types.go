@@ -9,32 +9,32 @@ type PRReviewInput struct {
 	RepoName       string `json:"repo_name"`
 	Title          string `json:"title"`
 	DiffURL        string `json:"diff_url"`
-	HeadBranch     string `json:"head_branch"`      // original PR's source branch
-	HeadSHA        string `json:"head_sha"`         // commit SHA of the PR head — use this as Ref for file reads
-	BaseBranch     string `json:"base_branch"`      // original PR's target branch
-	PRAuthor       string `json:"pr_author"`        // GitHub login of the PR author
-	AutoFixEnabled bool   `json:"auto_fix_enabled"` // whether to run auto-fix phases for this PR
+	HeadBranch     string `json:"head_branch"`
+	HeadSHA        string `json:"head_sha"`
+	BaseBranch     string `json:"base_branch"`
+	PRAuthor       string `json:"pr_author"`
+	AutoFixEnabled bool   `json:"auto_fix_enabled"`
 }
 
 // PollPRsInput is the input for the PollPRsWorkflow triggered by a Temporal Schedule.
 type PollPRsInput struct {
-	Repos        []string `json:"repos"`          // "owner/repo" pairs to poll
-	AutoFixUsers []string `json:"auto_fix_users"` // GitHub logins allowed to receive auto-fixes
+	Repos        []string `json:"repos"`
+	AutoFixUsers []string `json:"auto_fix_users"`
 }
 
 // AgentReviewInput contains PR metadata and fetched diff content for agent reviews
 type AgentReviewInput struct {
-	PRReviewInput        // Embedded PR metadata
-	DiffContent   string `json:"diff_content"` // Fetched diff content
+	PRReviewInput
+	DiffContent string `json:"diff_content"`
 }
 
 // AgentResult represents the output from a review agent
 type AgentResult struct {
 	AgentName          string    `json:"agent_name"`
-	Status             string    `json:"status"` // "passed", "failed", "warning"
+	Status             string    `json:"status"`
 	Findings           []string  `json:"findings"`
-	StructuredFindings []Finding `json:"structured_findings,omitempty"` // typed findings for downstream triage
-	Progress           int       `json:"progress"`                     // 0-100
+	StructuredFindings []Finding `json:"structured_findings,omitempty"`
+	Progress           int       `json:"progress"`
 	Timestamp          time.Time `json:"timestamp"`
 }
 
@@ -44,22 +44,40 @@ type SynthesisInput struct {
 	AgentResults  []AgentResult `json:"agent_results"`
 }
 
+// DiffCoverage tracks how much of the diff was actually reviewed.
+type DiffCoverage struct {
+	TotalFiles       int    `json:"total_files"`
+	TotalDiffBytes   int    `json:"total_diff_bytes"`
+	TotalDiffLines   int    `json:"total_diff_lines"`
+	ReviewedFiles    int    `json:"reviewed_files"`
+	ReviewedBytes    int    `json:"reviewed_bytes"`
+	ReviewedLines    int    `json:"reviewed_lines"`
+	OmittedFiles     int    `json:"omitted_files"`
+	OmittedBytes     int    `json:"omitted_bytes"`
+	OmittedLines     int    `json:"omitted_lines"`
+	Truncated        bool   `json:"truncated"`
+	TruncatedAtBytes int    `json:"truncated_at_bytes,omitempty"`
+	TruncatedAtLines int    `json:"truncated_at_lines,omitempty"`
+	OmissionReason   string `json:"omission_reason,omitempty"`
+}
+
 // ReviewSummary is the final output of the workflow
 type ReviewSummary struct {
 	PRNumber       int           `json:"pr_number"`
-	OverallStatus  string        `json:"overall_status"` // "approved", "needs_changes", "blocked"
+	OverallStatus  string        `json:"overall_status"`
 	Recommendation string        `json:"recommendation"`
 	AgentResults   []AgentResult `json:"agent_results"`
 	Summary        string        `json:"summary"`
 	Timestamp      time.Time     `json:"timestamp"`
+	Coverage       DiffCoverage  `json:"coverage"`
 }
 
 // WorkflowEvent represents a progress event from an agent
 type WorkflowEvent struct {
 	WorkflowID string       `json:"workflow_id"`
-	EventType  string       `json:"event_type"` // "agent_started", "agent_progress", "agent_completed", "agent_failed"
+	EventType  string       `json:"event_type"`
 	AgentName  string       `json:"agent_name"`
-	Progress   int          `json:"progress"` // 0-100
+	Progress   int          `json:"progress"`
 	Result     *AgentResult `json:"result,omitempty"`
 	Error      string       `json:"error,omitempty"`
 	Timestamp  time.Time    `json:"timestamp"`
@@ -85,12 +103,12 @@ const (
 
 // Finding represents a single review finding with optional location context.
 type Finding struct {
-	Severity     string `json:"severity"`               // "critical", "high", "medium", "low"
-	Title        string `json:"title"`                   // Brief description
-	Description  string `json:"description"`             // Detailed explanation
-	File         string `json:"file,omitempty"`          // relative file path
-	Line         int    `json:"line,omitempty"`           // best-effort line number
-	SuggestedFix string `json:"suggested_fix,omitempty"` // review agent's proposed fix
+	Severity     string `json:"severity"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	File         string `json:"file,omitempty"`
+	Line         int    `json:"line,omitempty"`
+	SuggestedFix string `json:"suggested_fix,omitempty"`
 }
 
 // TriageInput is the input for the triage classification activity.
@@ -103,8 +121,8 @@ type TriageInput struct {
 type TriageDecision struct {
 	Finding         Finding `json:"finding"`
 	AutoFixable     bool    `json:"auto_fixable"`
-	Reason          string  `json:"reason"`           // why this decision was made
-	FixInstructions string  `json:"fix_instructions"` // precise instructions for fixer; empty if human-required
+	Reason          string  `json:"reason"`
+	FixInstructions string  `json:"fix_instructions"`
 }
 
 // FixFindingInput is the input for a single fixer child workflow.
@@ -113,7 +131,7 @@ type FixFindingInput struct {
 	RepoOwner  string         `json:"repo_owner"`
 	RepoName   string         `json:"repo_name"`
 	HeadBranch string         `json:"head_branch"`
-	HeadSHA    string         `json:"head_sha"` // commit SHA to use as Ref for file reads
+	HeadSHA    string         `json:"head_sha"`
 }
 
 // ReadFileInput is the input for the GitHub file read activity.
@@ -121,7 +139,7 @@ type ReadFileInput struct {
 	RepoOwner string `json:"repo_owner"`
 	RepoName  string `json:"repo_name"`
 	FilePath  string `json:"file_path"`
-	Ref       string `json:"ref"` // branch or commit SHA
+	Ref       string `json:"ref"`
 }
 
 // GenerateFixInput is the input for the fix generator activity.
@@ -132,9 +150,9 @@ type GenerateFixInput struct {
 
 // FixResult is the output of one fixer child workflow.
 type FixResult struct {
-	FindingID     string   `json:"finding_id"`      // Finding.Title used as stable ID
+	FindingID     string   `json:"finding_id"`
 	Success       bool     `json:"success"`
-	Diff          string   `json:"diff"`             // unified diff
+	Diff          string   `json:"diff"`
 	FilesChanged  []string `json:"files_changed"`
 	CommitMsg     string   `json:"commit_msg"`
 	FailureReason string   `json:"failure_reason,omitempty"`
@@ -146,7 +164,7 @@ type CoalesceInput struct {
 	RepoOwner  string      `json:"repo_owner"`
 	RepoName   string      `json:"repo_name"`
 	HeadBranch string      `json:"head_branch"`
-	HeadSHA    string      `json:"head_sha"` // commit SHA to branch from; avoids a getBranchSHA roundtrip
+	HeadSHA    string      `json:"head_sha"`
 	PRNumber   int         `json:"pr_number"`
 }
 
@@ -197,12 +215,12 @@ type PostReviewOutput struct {
 
 // FeedbackPollerInput is the input for FeedbackPollerWorkflow.
 type FeedbackPollerInput struct {
-	WorkflowID     string `json:"workflow_id"`      // parent review workflow ID
+	WorkflowID     string `json:"workflow_id"`
 	RepoOwner      string `json:"repo_owner"`
 	RepoName       string `json:"repo_name"`
 	PRNumber       int    `json:"pr_number"`
 	GitHubReviewID int64  `json:"github_review_id"`
-	ReviewBody     string `json:"review_body"` // body to restore after user submits the pending review
+	ReviewBody     string `json:"review_body"`
 }
 
 // FeedbackPollResult is the output of ActivityCheckFeedback.
