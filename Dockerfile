@@ -17,7 +17,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o lyon .
 
 # Final runtime image
-FROM alpine:3.19
+FROM alpine:3.24
 
 # Install ca-certificates for HTTPS and wget for healthcheck
 RUN apk --no-cache add ca-certificates wget
