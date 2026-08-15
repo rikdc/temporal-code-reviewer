@@ -381,7 +381,16 @@ func formatLineComment(_ string, f types.Finding) string {
 func formatReviewBody(summary types.ReviewSummary, findings []agentFinding) string {
 	var sb strings.Builder
 
-	sb.WriteString("Hello! :wave: I'm A/B testing code review prompts and the comments from this PR are fully automated. They are non-blocking and you can ignore them. If you have time I would appreciate if you could react :+1: for good and :-1: for poor quality comments. Feel free to respond with comments as well - this will be fed back in to the prompt to improve. - Thanks, @rikdc.\n\n")
+	// Disclose coverage status prominently when truncated
+	if summary.Coverage.Truncated {
+		sb.WriteString("**⚠️ INCOMPLETE REVIEW** — The diff was too large and was truncated. ")
+		sb.WriteString(fmt.Sprintf("Reviewed %d of %d bytes (%d of %d lines). ",
+			summary.Coverage.ReviewedBytes, summary.Coverage.TotalDiffBytes,
+			summary.Coverage.ReviewedLines, summary.Coverage.TotalDiffLines))
+		sb.WriteString(fmt.Sprintf("Omitted %d bytes (%d lines). %s\n\n",
+			summary.Coverage.OmittedBytes, summary.Coverage.OmittedLines,
+			summary.Coverage.OmissionReason))
+	}
 
 	sb.WriteString("Review Summary:\n")
 	for _, r := range summary.AgentResults {

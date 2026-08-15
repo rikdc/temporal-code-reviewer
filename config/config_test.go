@@ -543,6 +543,39 @@ func TestValidate(t *testing.T) {
 			wantErr:     true,
 			errContains: "api_key required",
 		},
+		{
+			name: "webhook enabled without secret",
+			config: Config{
+				OpenRouter: OpenRouterConfig{
+					APIKey:  "test-key",
+					BaseURL: "https://openrouter.ai/api/v1",
+					Timeout: 30,
+				},
+				Webhook: WebhookConfig{
+					Enabled: true,
+					Secret:  "",
+				},
+				Agents: defaultTestAgents(),
+			},
+			wantErr:     true,
+			errContains: "webhook.secret required",
+		},
+		{
+			name: "webhook enabled with secret is valid",
+			config: Config{
+				OpenRouter: OpenRouterConfig{
+					APIKey:  "test-key",
+					BaseURL: "https://openrouter.ai/api/v1",
+					Timeout: 30,
+				},
+				Webhook: WebhookConfig{
+					Enabled: true,
+					Secret:  "my-secret",
+				},
+				Agents: defaultTestAgents(),
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -560,6 +593,17 @@ func TestValidate(t *testing.T) {
 				t.Errorf("Validate() unexpected error = %v", err)
 			}
 		})
+	}
+}
+
+func defaultTestAgents() AgentConfigs {
+	return AgentConfigs{
+		Security:      AgentConfig{Model: "m", MaxTokens: 100, Temperature: 0.3, PromptFile: "security.md"},
+		Style:         AgentConfig{Model: "m", MaxTokens: 100, Temperature: 0.5, PromptFile: "style.md"},
+		Logic:         AgentConfig{Model: "m", MaxTokens: 100, Temperature: 0.3, PromptFile: "logic.md"},
+		Documentation: AgentConfig{Model: "m", MaxTokens: 100, Temperature: 0.5, PromptFile: "documentation.md"},
+		Triage:        AgentConfig{Model: "m", MaxTokens: 100, Temperature: 0.2, PromptFile: "triage.md"},
+		FixGenerator:  AgentConfig{Model: "m", MaxTokens: 100, Temperature: 0.1},
 	}
 }
 

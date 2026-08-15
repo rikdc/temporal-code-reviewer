@@ -1,6 +1,7 @@
 package reviews
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -8,16 +9,14 @@ import (
 	"github.com/rikdc/temporal-code-reviewer/types"
 )
 
-// State constants for a posted review.
 const (
-	StatePending   = "pending"   // draft review posted to GitHub; awaiting human submission
-	StateSubmitted = "submitted" // review submitted on GitHub
-	StateClosed    = "closed"    // PR merged or closed; review no longer actionable
+	StatePending   = "pending"
+	StateSubmitted = "submitted"
+	StateClosed    = "closed"
 )
 
-// Record holds the persisted state of one posted PR review.
 type Record struct {
-	ID             string    `json:"id"`         // "owner/repo#pr@sha"
+	ID             string    `json:"id"`
 	RepoOwner      string    `json:"repo_owner"`
 	RepoName       string    `json:"repo_name"`
 	PRNumber       int       `json:"pr_number"`
@@ -32,25 +31,85 @@ type Record struct {
 	ReviewBody     string    `json:"review_body,omitempty"`
 }
 
-// Store is a thread-safe in-memory store for posted review records.
-// New records are fanned out to SSE subscribers immediately.
-type Store struct {
-	mu          sync.RWMutex
-	records     map[string]*Record // keyed by Record.ID
-	ordered     []string           // insertion order; used by List
-	subscribers []chan Record
+// ReviewRecord is a review record for SQLite persistence.
+type ReviewRecord struct {
+	ID             string
+	RepoOwner      string
+	RepoName       string
+	PRNumber       int
+	Title          string
+	PRAuthor       string
+	HeadSHA        string
+	PRURL          string
+	State          string
+	PostedAt       time.Time
+	UpdatedAt      time.Time
+	GitHubReviewID int64
+	ReviewBody     string
 }
 
-// NewStore creates an empty Store.
+// ReviewPersister abstracts SQLite persistence for review records.
+type ReviewPersister interface {
+	SaveReviewRecord(ctx context.Context, id, repoOwner, repoName string, prNumber int, title, prAuthor, headSHA, prURL, state, reviewBody string, githubReviewID int64, postedAt, updatedAt time.Time) error
+	ListReviewRecords(ctx context.Context) ([]ReviewRecord, error)
+	UpdateReviewRecordState(ctx context.Context, repoOwner, repoName string, prNumber int, state string) error
+}
+
+// Store is a thread-safe store for posted review records.
+// Writes are persisted to SQLite when a persister is configured.
+type Store struct {
+	mu          sync.RWMutex
+	records     map[string]*Record
+	ordered     []string
+	subscribers []chan Record
+	persister   ReviewPersister
+}
+
 func NewStore() *Store {
-	return &Store{
-		records: make(map[string]*Record),
+	return &Store{records: make(map[string]*Record)}
+}
+
+// NewStoreWithPersistence creates a Store backed by SQLite.
+func NewStoreWithPersistence(persister ReviewPersister) *Store {
+	s := &Store{
+		records:   make(map[string]*Record),
+		persister: persister,
+	}
+	s.loadFromDB()
+	return s
+}
+
+func (s *Store) loadFromDB() {
+	if s.persister == nil {
+		return
+	}
+
+	records, err := s.persister.ListReviewRecords(context.Background())
+	if err != nil {
+		return
+	}
+
+	for _, r := range records {
+		rec := &Record{
+			ID:             r.ID,
+			RepoOwner:      r.RepoOwner,
+			RepoName:       r.RepoName,
+			PRNumber:       r.PRNumber,
+			Title:          r.Title,
+			PRAuthor:       r.PRAuthor,
+			HeadSHA:        r.HeadSHA,
+			PRURL:          r.PRURL,
+			State:          r.State,
+			PostedAt:       r.PostedAt,
+			UpdatedAt:      r.UpdatedAt,
+			GitHubReviewID: r.GitHubReviewID,
+			ReviewBody:     r.ReviewBody,
+		}
+		s.records[rec.ID] = rec
+		s.ordered = append(s.ordered, rec.ID)
 	}
 }
 
-// Add records a newly posted review and notifies all current SSE subscribers.
-// If a record with the same ID already exists it is overwritten (re-review
-// after a new commit push).
 func (s *Store) Add(input types.PostReviewInput, githubReviewID int64, reviewBody string) Record {
 	pr := input.PRReviewInput
 	id := fmt.Sprintf("%s/%s#%d@%s", pr.RepoOwner, pr.RepoName, pr.PRNumber, pr.HeadSHA)
@@ -82,22 +141,26 @@ func (s *Store) Add(input types.PostReviewInput, githubReviewID int64, reviewBod
 	copy(subs, s.subscribers)
 	s.mu.Unlock()
 
+	// Persist to SQLite
+	if s.persister != nil {
+		_ = s.persister.SaveReviewRecord(context.Background(),
+			id, pr.RepoOwner, pr.RepoName, pr.PRNumber, pr.Title, pr.PRAuthor,
+			pr.HeadSHA, prURL, StatePending, reviewBody, githubReviewID, now, now)
+	}
+
 	for _, ch := range subs {
 		select {
 		case ch <- rec:
 		default:
-			// Subscriber is full; drop rather than block.
 		}
 	}
 
 	return rec
 }
 
-// List returns all records in insertion order (oldest first).
 func (s *Store) List() []Record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
 	out := make([]Record, 0, len(s.ordered))
 	for _, id := range s.ordered {
 		out = append(out, *s.records[id])
@@ -105,7 +168,6 @@ func (s *Store) List() []Record {
 	return out
 }
 
-// Subscribe returns a buffered channel that receives every new Record.
 func (s *Store) Subscribe() chan Record {
 	ch := make(chan Record, 64)
 	s.mu.Lock()
@@ -114,13 +176,9 @@ func (s *Store) Subscribe() chan Record {
 	return ch
 }
 
-// FindPendingByPR returns the most recent PENDING record for a given PR.
-// Returns nil if no pending record exists.
 func (s *Store) FindPendingByPR(repoOwner, repoName string, prNumber int) *Record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	// Walk in reverse insertion order to find the most recent.
 	for i := len(s.ordered) - 1; i >= 0; i-- {
 		rec := s.records[s.ordered[i]]
 		if rec.RepoOwner == repoOwner && rec.RepoName == repoName && rec.PRNumber == prNumber && rec.State == StatePending {
@@ -131,11 +189,8 @@ func (s *Store) FindPendingByPR(repoOwner, repoName string, prNumber int) *Recor
 	return nil
 }
 
-// MarkSubmitted transitions a record to StateSubmitted and fans the update
-// out to SSE subscribers.
 func (s *Store) MarkSubmitted(repoOwner, repoName string, prNumber int) {
 	now := time.Now()
-
 	s.mu.Lock()
 	var updated []Record
 	for _, id := range s.ordered {
@@ -150,6 +205,10 @@ func (s *Store) MarkSubmitted(repoOwner, repoName string, prNumber int) {
 	copy(subs, s.subscribers)
 	s.mu.Unlock()
 
+	if s.persister != nil {
+		_ = s.persister.UpdateReviewRecordState(context.Background(), repoOwner, repoName, prNumber, StateSubmitted)
+	}
+
 	for _, rec := range updated {
 		for _, ch := range subs {
 			select {
@@ -160,12 +219,8 @@ func (s *Store) MarkSubmitted(repoOwner, repoName string, prNumber int) {
 	}
 }
 
-// MarkClosed transitions all records for the given PR to StateClosed and fans
-// the updated records out to SSE subscribers. This is called when the feedback
-// poller detects the PR has been merged or closed.
 func (s *Store) MarkClosed(repoOwner, repoName string, prNumber int) {
 	now := time.Now()
-
 	s.mu.Lock()
 	var updated []Record
 	for _, id := range s.ordered {
@@ -180,6 +235,10 @@ func (s *Store) MarkClosed(repoOwner, repoName string, prNumber int) {
 	copy(subs, s.subscribers)
 	s.mu.Unlock()
 
+	if s.persister != nil {
+		_ = s.persister.UpdateReviewRecordState(context.Background(), repoOwner, repoName, prNumber, StateClosed)
+	}
+
 	for _, rec := range updated {
 		for _, ch := range subs {
 			select {
@@ -190,14 +249,9 @@ func (s *Store) MarkClosed(repoOwner, repoName string, prNumber int) {
 	}
 }
 
-// Unsubscribe removes a subscriber channel. The channel is not closed here
-// because Add copies the slice before releasing the lock and may still be
-// writing to it; closing would cause a panic. The SSE handler drains via
-// r.Context().Done() and the channel is GC'd when no longer referenced.
 func (s *Store) Unsubscribe(ch chan Record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	for i, sub := range s.subscribers {
 		if sub == ch {
 			s.subscribers = append(s.subscribers[:i], s.subscribers[i+1:]...)

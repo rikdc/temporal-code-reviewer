@@ -62,13 +62,13 @@ index 1234567..abcdefg 100644
 
 	// Fetch diff
 	ctx := context.Background()
-	got, err := fetcher.FetchDiff(ctx, server.URL)
+	result, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err != nil {
 		t.Fatalf("FetchDiff() error = %v, want nil", err)
 	}
 
-	if got != diffContent {
-		t.Errorf("FetchDiff() = %q, want %q", got, diffContent)
+	if result.Content != diffContent {
+		t.Errorf("FetchDiff() = %q, want %q", result.Content, diffContent)
 	}
 }
 
@@ -89,24 +89,24 @@ func TestDiffFetcher_FetchDiff_CacheHit(t *testing.T) {
 	ctx := context.Background()
 
 	// First fetch - should hit server
-	got1, err := fetcher.FetchDiff(ctx, server.URL)
+	result1, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err != nil {
 		t.Fatalf("First FetchDiff() error = %v", err)
 	}
-	if got1 != diffContent {
-		t.Errorf("First FetchDiff() = %q, want %q", got1, diffContent)
+	if result1.Content != diffContent {
+		t.Errorf("First FetchDiff() = %q, want %q", result1.Content, diffContent)
 	}
 	if requestCount != 1 {
 		t.Errorf("First fetch requestCount = %d, want 1", requestCount)
 	}
 
 	// Second fetch - should hit cache
-	got2, err := fetcher.FetchDiff(ctx, server.URL)
+	result2, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err != nil {
 		t.Fatalf("Second FetchDiff() error = %v", err)
 	}
-	if got2 != diffContent {
-		t.Errorf("Second FetchDiff() = %q, want %q", got2, diffContent)
+	if result2.Content != diffContent {
+		t.Errorf("Second FetchDiff() = %q, want %q", result2.Content, diffContent)
 	}
 	if requestCount != 1 {
 		t.Errorf("Second fetch requestCount = %d, want 1 (should be cached)", requestCount)
@@ -131,18 +131,18 @@ func TestDiffFetcher_FetchDiff_TruncateByLines(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	got, err := fetcher.FetchDiff(ctx, server.URL)
+	result, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err != nil {
 		t.Fatalf("FetchDiff() error = %v", err)
 	}
 
 	// Should be truncated to 1000 lines
-	gotLines := strings.Split(got, "\n")
+	gotLines := strings.Split(result.Content, "\n")
 	if len(gotLines) > MaxDiffLines+5 { // Allow some margin for truncation message
 		t.Errorf("FetchDiff() returned %d lines, want <= %d", len(gotLines), MaxDiffLines+5)
 	}
 
-	if !strings.Contains(got, "[... diff truncated ...]") {
+	if !strings.Contains(result.Content, "[... diff truncated ...]") {
 		t.Error("FetchDiff() should contain truncation message")
 	}
 }
@@ -170,17 +170,17 @@ func TestDiffFetcher_FetchDiff_TruncateByChars(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	got, err := fetcher.FetchDiff(ctx, server.URL)
+	result, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err != nil {
 		t.Fatalf("FetchDiff() error = %v", err)
 	}
 
 	// Should be truncated to ~50k chars
-	if len(got) > MaxDiffChars+100 { // Allow some margin for truncation message
-		t.Errorf("FetchDiff() returned %d chars, want <= %d", len(got), MaxDiffChars+100)
+	if len(result.Content) > MaxDiffChars+100 { // Allow some margin for truncation message
+		t.Errorf("FetchDiff() returned %d chars, want <= %d", len(result.Content), MaxDiffChars+100)
 	}
 
-	if !strings.Contains(got, "[... diff truncated ...]") {
+	if !strings.Contains(result.Content, "[... diff truncated ...]") {
 		t.Error("FetchDiff() should contain truncation message")
 	}
 }
@@ -200,19 +200,19 @@ func TestDiffFetcher_FetchDiff_SizeLimit(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	got, err := fetcher.FetchDiff(ctx, server.URL)
+	result, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err != nil {
 		t.Fatalf("FetchDiff() error = %v", err)
 	}
 
 	// Should be limited to 10MB and then truncated by char count
-	if len(got) > MaxDiffSizeBytes {
-		t.Errorf("FetchDiff() returned %d bytes, want <= %d", len(got), MaxDiffSizeBytes)
+	if len(result.Content) > MaxDiffSizeBytes {
+		t.Errorf("FetchDiff() returned %d bytes, want <= %d", len(result.Content), MaxDiffSizeBytes)
 	}
 
 	// Will also be truncated by character count (50k)
-	if len(got) > MaxDiffChars+100 {
-		t.Errorf("FetchDiff() returned %d chars after truncation, want <= %d", len(got), MaxDiffChars+100)
+	if len(result.Content) > MaxDiffChars+100 {
+		t.Errorf("FetchDiff() returned %d chars after truncation, want <= %d", len(result.Content), MaxDiffChars+100)
 	}
 }
 
@@ -227,7 +227,7 @@ func TestDiffFetcher_FetchDiff_HTTPError_404(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	_, err := fetcher.FetchDiff(ctx, server.URL)
+	_, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err == nil {
 		t.Error("FetchDiff() with 404 should return error")
 	}
@@ -247,7 +247,7 @@ func TestDiffFetcher_FetchDiff_HTTPError_500(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	_, err := fetcher.FetchDiff(ctx, server.URL)
+	_, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err == nil {
 		t.Error("FetchDiff() with 500 should return error")
 	}
@@ -272,7 +272,7 @@ func TestDiffFetcher_FetchDiff_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := fetcher.FetchDiff(ctx, server.URL)
+	_, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err == nil {
 		t.Error("FetchDiff() with timeout should return error")
 	}
@@ -286,7 +286,7 @@ func TestDiffFetcher_FetchDiff_InvalidURL(t *testing.T) {
 	fetcher := NewDiffFetcher(logger, nil)
 
 	ctx := context.Background()
-	_, err := fetcher.FetchDiff(ctx, "http://nonexistent-domain-12345.invalid")
+	_, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: "http://nonexistent-domain-12345.invalid"})
 	if err == nil {
 		t.Error("FetchDiff() with invalid URL should return error")
 	}
@@ -303,13 +303,13 @@ func TestDiffFetcher_FetchDiff_EmptyDiff(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	got, err := fetcher.FetchDiff(ctx, server.URL)
+	result, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server.URL})
 	if err != nil {
 		t.Fatalf("FetchDiff() error = %v", err)
 	}
 
-	if got != "" {
-		t.Errorf("FetchDiff() = %q, want empty string", got)
+	if result.Content != "" {
+		t.Errorf("FetchDiff() = %q, want empty string", result.Content)
 	}
 }
 
@@ -426,29 +426,29 @@ func TestDiffFetcher_FetchDiff_MultipleURLs(t *testing.T) {
 	ctx := context.Background()
 
 	// Fetch from first URL
-	got1, err := fetcher.FetchDiff(ctx, server1.URL)
+	result1, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server1.URL})
 	if err != nil {
 		t.Fatalf("FetchDiff(url1) error = %v", err)
 	}
-	if got1 != "diff1" {
-		t.Errorf("FetchDiff(url1) = %q, want 'diff1'", got1)
+	if result1.Content != "diff1" {
+		t.Errorf("FetchDiff(url1) = %q, want 'diff1'", result1.Content)
 	}
 
 	// Fetch from second URL
-	got2, err := fetcher.FetchDiff(ctx, server2.URL)
+	result2, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server2.URL})
 	if err != nil {
 		t.Fatalf("FetchDiff(url2) error = %v", err)
 	}
-	if got2 != "diff2" {
-		t.Errorf("FetchDiff(url2) = %q, want 'diff2'", got2)
+	if result2.Content != "diff2" {
+		t.Errorf("FetchDiff(url2) = %q, want 'diff2'", result2.Content)
 	}
 
 	// Fetch from first URL again - should be cached
-	got3, err := fetcher.FetchDiff(ctx, server1.URL)
+	result3, err := fetcher.FetchDiff(ctx, DiffFetchInput{DiffURL: server1.URL})
 	if err != nil {
 		t.Fatalf("FetchDiff(url1 cached) error = %v", err)
 	}
-	if got3 != "diff1" {
-		t.Errorf("FetchDiff(url1 cached) = %q, want 'diff1'", got3)
+	if result3.Content != "diff1" {
+		t.Errorf("FetchDiff(url1 cached) = %q, want 'diff1'", result3.Content)
 	}
 }

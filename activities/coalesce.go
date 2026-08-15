@@ -3,7 +3,6 @@ package activities
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/google/go-github/v68/github"
@@ -17,21 +16,15 @@ type CoalesceActivity struct {
 	logger *zap.Logger
 }
 
-// NewCoalesceActivity creates a new CoalesceActivity.
 func NewCoalesceActivity(client *github.Client, logger *zap.Logger) *CoalesceActivity {
-	return &CoalesceActivity{
-		client: client,
-		logger: logger,
-	}
+	return &CoalesceActivity{client: client, logger: logger}
 }
 
-// Execute merges all successful fix diffs into a new branch.
 func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInput) (types.CoalescedChangeset, error) {
 	if a.client == nil {
 		return types.CoalescedChangeset{}, fmt.Errorf("GitHub client not configured: GITHUB_TOKEN is required for branch operations")
 	}
 
-	// Filter to successful fixes only
 	var successful []types.FixResult
 	for _, r := range input.FixResults {
 		if r.Success {
@@ -44,8 +37,6 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 		return types.CoalescedChangeset{}, nil
 	}
 
-	// Derive branch name deterministically so that activity retries find the same
-	// branch via the idempotency check below instead of creating orphans.
 	shortSHA := input.HeadSHA
 	if len(shortSHA) > 8 {
 		shortSHA = shortSHA[:8]
@@ -57,8 +48,6 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 		zap.String("branch", branchName),
 		zap.String("base", input.HeadBranch))
 
-	// Use the commit SHA from the workflow input directly — this is more reliable than
-	// resolving the branch name, which may not exist (deleted branch, fork PR, etc.).
 	headSHA := input.HeadSHA
 
 	// Check if branch already exists (idempotency for workflow replay)
@@ -72,16 +61,8 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 		}, nil
 	}
 
-	// Create branch from head
-	if err := a.createBranch(ctx, input.RepoOwner, input.RepoName, branchName, headSHA); err != nil {
-		return types.CoalescedChangeset{}, fmt.Errorf("create branch: %w", err)
-	}
-
 	var applied []types.FixResult
 	var conflicts []types.FixResult
-
-	// Track which files already have an applied fix.
-	// If a second fix touches the same file, it's a conflict.
 	appliedFiles := make(map[string]bool)
 
 	for _, fix := range successful {
@@ -92,7 +73,6 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 				break
 			}
 		}
-
 		if conflicting {
 			conflicts = append(conflicts, types.FixResult{
 				FindingID:     fix.FindingID,
@@ -104,24 +84,114 @@ func (a *CoalesceActivity) Execute(ctx context.Context, input types.CoalesceInpu
 			})
 			continue
 		}
-
 		for _, f := range fix.FilesChanged {
 			appliedFiles[f] = true
 		}
 		applied = append(applied, fix)
 	}
 
-	// Build commit message and create commit
-	if len(applied) > 0 {
-		var b strings.Builder
-		fmt.Fprintf(&b, "fix: ai-reviewed fixes for PR #%d\n", input.PRNumber)
-		for _, fix := range applied {
-			fmt.Fprintf(&b, "\n- %s", fix.CommitMsg)
-		}
-		commitMsg := b.String()
+	if len(applied) == 0 {
+		return types.CoalescedChangeset{
+			Conflicts: conflicts,
+		}, nil
+	}
 
-		if err := a.createCommitWithDiffs(ctx, input.RepoOwner, input.RepoName, branchName, headSHA, applied, commitMsg); err != nil {
-			return types.CoalescedChangeset{}, fmt.Errorf("create commit: %w", err)
+	// Build tree entries from fixes with exact patch validation
+	var entries []*github.TreeEntry
+	for _, fix := range applied {
+		for _, filePath := range fix.FilesChanged {
+			// Read the file at the base SHA
+			fileContent, _, _, err := a.client.Repositories.GetContents(
+				ctx, input.RepoOwner, input.RepoName, filePath,
+				&github.RepositoryContentGetOptions{Ref: headSHA},
+			)
+			if err != nil {
+				return types.CoalescedChangeset{}, fmt.Errorf("read file %s: %w", filePath, err)
+			}
+
+			decoded, err := fileContent.GetContent()
+			if err != nil {
+				return types.CoalescedChangeset{}, fmt.Errorf("decode file %s: %w", filePath, err)
+			}
+
+			// Parse the patch
+			patch, err := ParsePatch(fix.Diff)
+			if err != nil {
+				return types.CoalescedChangeset{}, fmt.Errorf("parse patch for %s: %w", filePath, err)
+			}
+
+			// Validate the patch targets the correct file
+			if err := ValidatePatch(decoded, patch, filePath); err != nil {
+				return types.CoalescedChangeset{}, fmt.Errorf("validate patch for %s: %w", filePath, err)
+			}
+
+			// Apply the patch with exact context matching
+			newContent, err := ApplyPatch(decoded, patch)
+			if err != nil {
+				return types.CoalescedChangeset{}, fmt.Errorf("apply patch for %s: %w", filePath, err)
+			}
+
+			// Verify the result is different from the input
+			if newContent == decoded {
+				return types.CoalescedChangeset{}, fmt.Errorf("patch for %s produced no change", filePath)
+			}
+
+			entries = append(entries, &github.TreeEntry{
+				Path:    github.Ptr(filePath),
+				Mode:    github.Ptr("100644"),
+				Type:    github.Ptr("blob"),
+				Content: github.Ptr(newContent),
+			})
+		}
+	}
+
+	if len(entries) == 0 {
+		return types.CoalescedChangeset{
+			Applied:   applied,
+			Conflicts: conflicts,
+		}, nil
+	}
+
+	// Create tree first
+	tree, _, err := a.client.Git.CreateTree(ctx, input.RepoOwner, input.RepoName, headSHA, entries)
+	if err != nil {
+		return types.CoalescedChangeset{}, fmt.Errorf("create tree: %w", err)
+	}
+
+	// Create commit before branch
+	var commitMsg strings.Builder
+	fmt.Fprintf(&commitMsg, "fix: ai-reviewed fixes for PR #%d\n", input.PRNumber)
+	for _, fix := range applied {
+		fmt.Fprintf(&commitMsg, "\n- %s", fix.CommitMsg)
+	}
+
+	commit, _, err := a.client.Git.CreateCommit(ctx, input.RepoOwner, input.RepoName, &github.Commit{
+		Message: github.Ptr(commitMsg.String()),
+		Tree:    &github.Tree{SHA: tree.SHA},
+		Parents: []*github.Commit{{SHA: github.Ptr(headSHA)}},
+	}, nil)
+	if err != nil {
+		return types.CoalescedChangeset{}, fmt.Errorf("create commit: %w", err)
+	}
+
+	// Create or update branch ref to point to the completed commit
+	if existingSHA != "" {
+		// Branch exists — update it
+		_, _, err = a.client.Git.UpdateRef(ctx, input.RepoOwner, input.RepoName, &github.Reference{
+			Ref:    github.Ptr("refs/heads/" + branchName),
+			Object: &github.GitObject{SHA: commit.SHA},
+		}, false)
+		if err != nil {
+			return types.CoalescedChangeset{}, fmt.Errorf("update ref: %w", err)
+		}
+	} else {
+		// Create new branch
+		_, _, err = a.client.Git.CreateRef(ctx, input.RepoOwner, input.RepoName, &github.Reference{
+			Ref:    github.Ptr("refs/heads/" + branchName),
+			Object: &github.GitObject{SHA: commit.SHA},
+		})
+		if err != nil {
+			return types.CoalescedChangeset{}, fmt.Errorf("create ref: %w", err)
 		}
 	}
 
@@ -138,147 +208,4 @@ func (a *CoalesceActivity) getBranchSHA(ctx context.Context, owner, repo, branch
 		return "", fmt.Errorf("get ref heads/%s: %w", branch, err)
 	}
 	return ref.GetObject().GetSHA(), nil
-}
-
-func (a *CoalesceActivity) createBranch(ctx context.Context, owner, repo, branch, sha string) error {
-	_, _, err := a.client.Git.CreateRef(ctx, owner, repo, &github.Reference{
-		Ref:    github.Ptr("refs/heads/" + branch),
-		Object: &github.GitObject{SHA: github.Ptr(sha)},
-	})
-	if err != nil {
-		return fmt.Errorf("create ref: %w", err)
-	}
-	return nil
-}
-
-func (a *CoalesceActivity) createCommitWithDiffs(ctx context.Context, owner, repo, branch, baseSHA string, fixes []types.FixResult, commitMsg string) error {
-	// Build tree entries from fixes
-	var entries []*github.TreeEntry
-
-	for _, fix := range fixes {
-		for _, filePath := range fix.FilesChanged {
-			// Read current file content from the base
-			fileContent, _, _, err := a.client.Repositories.GetContents(
-				ctx, owner, repo, filePath,
-				&github.RepositoryContentGetOptions{Ref: baseSHA},
-			)
-			if err != nil {
-				return fmt.Errorf("read file %s: %w", filePath, err)
-			}
-
-			decoded, err := fileContent.GetContent()
-			if err != nil {
-				return fmt.Errorf("decode file %s: %w", filePath, err)
-			}
-
-			// Apply the diff to the file content (best-effort)
-			newContent := applyDiffBestEffort(decoded, fix.Diff)
-
-			entries = append(entries, &github.TreeEntry{
-				Path:    github.Ptr(filePath),
-				Mode:    github.Ptr("100644"),
-				Type:    github.Ptr("blob"),
-				Content: github.Ptr(newContent),
-			})
-		}
-	}
-
-	// Create tree
-	tree, _, err := a.client.Git.CreateTree(ctx, owner, repo, baseSHA, entries)
-	if err != nil {
-		return fmt.Errorf("create tree: %w", err)
-	}
-
-	// Create commit
-	commit, _, err := a.client.Git.CreateCommit(ctx, owner, repo, &github.Commit{
-		Message: github.Ptr(commitMsg),
-		Tree:    &github.Tree{SHA: tree.SHA},
-		Parents: []*github.Commit{{SHA: github.Ptr(baseSHA)}},
-	}, nil)
-	if err != nil {
-		return fmt.Errorf("create commit: %w", err)
-	}
-
-	// Update branch ref to point to new commit
-	_, _, err = a.client.Git.UpdateRef(ctx, owner, repo, &github.Reference{
-		Ref:    github.Ptr("refs/heads/" + branch),
-		Object: &github.GitObject{SHA: commit.SHA},
-	}, false)
-	if err != nil {
-		return fmt.Errorf("update ref: %w", err)
-	}
-
-	return nil
-}
-
-// applyDiffBestEffort is a best-effort diff application. In production, use a proper
-// diff library. This simply returns the original content if the diff can't be applied.
-func applyDiffBestEffort(original, diff string) string {
-	lines := strings.Split(original, "\n")
-	diffLines := strings.Split(diff, "\n")
-
-	var result []string
-	origIdx := 0
-
-	for _, dl := range diffLines {
-		if strings.HasPrefix(dl, "@@") {
-			// Parse the hunk header to find the starting line in the original file.
-			// Copy any unchanged lines between the previous hunk and this one first.
-			if start, ok := parseHunkStart(dl); ok {
-				for origIdx < start && origIdx < len(lines) {
-					result = append(result, lines[origIdx])
-					origIdx++
-				}
-			}
-			continue
-		}
-		if strings.HasPrefix(dl, "---") || strings.HasPrefix(dl, "+++") {
-			continue
-		}
-		if strings.HasPrefix(dl, "-") {
-			origIdx++
-			continue
-		}
-		if strings.HasPrefix(dl, "+") {
-			result = append(result, dl[1:])
-			continue
-		}
-		if strings.HasPrefix(dl, " ") {
-			if origIdx < len(lines) {
-				result = append(result, lines[origIdx])
-				origIdx++
-			}
-			continue
-		}
-	}
-
-	if len(result) == 0 {
-		return original
-	}
-
-	for origIdx < len(lines) {
-		result = append(result, lines[origIdx])
-		origIdx++
-	}
-
-	return strings.Join(result, "\n")
-}
-
-// parseHunkStart parses the original-file starting line from a unified diff hunk header.
-// For "@@ -45,6 +45,8 @@", it returns 44 (0-indexed). Returns (0, false) on parse failure.
-func parseHunkStart(header string) (int, bool) {
-	// Format: @@ -<start>[,<count>] +<start>[,<count>] @@
-	parts := strings.Fields(header)
-	if len(parts) < 3 || !strings.HasPrefix(parts[1], "-") {
-		return 0, false
-	}
-	old := parts[1][1:] // strip leading "-"
-	if idx := strings.IndexByte(old, ','); idx >= 0 {
-		old = old[:idx]
-	}
-	n, err := strconv.Atoi(old)
-	if err != nil || n < 1 {
-		return 0, false
-	}
-	return n - 1, true // convert 1-indexed line number to 0-indexed slice position
 }

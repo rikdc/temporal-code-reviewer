@@ -1,255 +1,207 @@
-# Temporal Code Reviewer - Multi-Agent PR Review System
+# Temporal Code Reviewer
 
-A demonstration of true multi-agent orchestration using Temporal workflows in Golang. This system showcases the difference between sequential skills (human-orchestrated) and autonomous multi-agent systems.
-
-## Features
-
-- **4 Parallel Review Agents**: Security, Style, Logic, and Documentation agents run simultaneously
-- **1 Synthesis Agent**: Aggregates results after parallel agents complete
-- **Real-time Dashboard**: Visualizes agent progress using Server-Sent Events (SSE)
-- **GitHub Webhook Integration**: Autonomous workflow triggering
-- **Temporal Orchestration**: No human intervention required
+A durable, parallel code review system coordinated by Temporal workflows. Four specialized review agents (Security, Style, Logic, Documentation) analyze PR diffs concurrently, with optional triage and auto-fix capabilities.
 
 ## Architecture
 
 ```
-GitHub Webhook → Service → Temporal Workflow
-                     ↓
-                Event Bus (in-memory)
-                     ↓
-                Dashboard (SSE) ← Browser
+GitHub PR (webhook or poll) → Temporal Workflow
+  Phase 0: Fetch diff (with coverage tracking)
+  Phase 1: [Security, Style, Logic, Documentation] agents run in parallel
+  Phase 2: Synthesis agent aggregates results
+  Phase 3: Post draft GitHub review
+  Phase 4: Triage agent classifies findings
+  Phase 5-7: (optional) Auto-fix generation and PR creation
 ```
 
-**Components:**
-- **Temporal Workflow** - Orchestrates parallel agents
-- **Activity Agents** - Security, Style, Logic, Docs, Synthesis
-- **Dashboard** - SSE-based real-time UI
-- **Webhook Handler** - Receives PR events, starts workflows
-- **Event Bus** - In-memory pub/sub for progress updates
+Each phase is a Temporal activity with retries and heartbeats. The workflow is durable — it survives process restarts and provides exactly-once execution guarantees.
 
-## Quick Start
+## Operating environment
 
-### Prerequisites
+- **Runtime**: Go 1.26+, Temporal server, SQLite, GitHub API
+- **Deployment**: Docker Compose (recommended) or bare metal
+- **Network**: Private network only. Services bind to `127.0.0.1` by default.
+- **Storage**: SQLite for local durable state. No PostgreSQL required for the application itself (only for Temporal backend).
 
-- Docker & Docker Compose
-- Go 1.22+
+## Trust boundaries
 
-### 1. Start the Services
+- GitHub webhook payloads are untrusted (see `SECURITY.md`).
+- LLM output is untrusted and may be malformed or adversarial.
+- The webhook verifies HMAC signatures before processing.
+- All admin endpoints require bearer token authentication.
+- Auto-fix is disabled by default and requires explicit opt-in.
+- See `SECURITY.md` for the full threat model.
+
+## Quick start
+
+### 1. Configure secrets
 
 ```bash
-docker-compose up
+cp .env.example .env
+# Edit .env with your keys:
+#   OPENROUTER_API_KEY=sk-or-...
+#   GITHUB_TOKEN=ghp_...
+#   ADMIN_API_TOKEN=your-admin-token
+#   WEBHOOK_SECRET=your-webhook-secret
 ```
 
-Wait ~30 seconds for Temporal to initialize. You should see:
-- Temporal UI: http://localhost:8080
-- Dashboard: http://localhost:8081
-- Webhook: http://localhost:8082
+Or use file-backed secrets (recommended for production):
 
-### 2. Trigger a PR Review
+```yaml
+# config.yaml
+openrouter:
+  api_key_file: /path/to/openrouter-key
 
-Using the demo script:
+webhook:
+  enabled: true
+  secret_file: /path/to/webhook-secret
+
+admin:
+  token_file: /path/to/admin-token
+```
+
+### 2. Start with Docker Compose
 
 ```bash
-./trigger-demo.sh
+docker compose up -d
 ```
 
-Or manually:
+This starts:
+- PostgreSQL (Temporal backend)
+- Temporal server
+- Temporal UI (http://localhost:8080)
+- Temporal namespace initialization
+- The review service (http://localhost:8082)
+
+### 3. Start without Docker
+
+Requires a running Temporal server at `localhost:7233`:
 
 ```bash
-curl -X POST http://localhost:8082/webhook/pr \
-  -H "Content-Type: application/json" \
-  -d '{
-    "action": "opened",
-    "number": 123,
-    "repository": {
-      "owner": {"login": "example"},
-      "name": "test-repo"
-    },
-    "pull_request": {
-      "number": 123,
-      "title": "Test PR",
-      "diff_url": "https://github.com/example/test-repo/pull/123.diff"
-    }
-  }'
+# Create namespace (if not using Docker Compose init)
+temporal operator namespace create code-reviewer --rd 72h
+temporal operator search-attribute create --namespace code-reviewer --name Repository --type Text
+temporal operator search-attribute create --namespace code-reviewer --name PRAuthor --type Text
+
+# Run the service
+go run .
 ```
 
-### 3. Watch the Dashboard
+## Configuration
 
-The response includes a `dashboard_url`. Open it to watch:
-- 4 agents turn blue simultaneously (parallel execution)
-- Progress bars animate 0→100%
-- Agents turn green upon completion
-- Synthesis agent starts after others complete
-- Total time: ~15-20 seconds
+See `config.yaml` for all options. Key settings:
 
-### 4. Verify in Temporal UI
+| Setting | Default | Description |
+|---|---|---|
+| `server.bind_address` | `127.0.0.1:8082` | API server bind address |
+| `server.dashboard_address` | `127.0.0.1:8081` | Dashboard bind address |
+| `webhook.enabled` | `false` | Enable GitHub webhook receiver |
+| `webhook.secret` | (required when enabled) | HMAC-SHA256 webhook secret |
+| `webhook.allowed_repos` | `[]` | Repository allowlist (`owner/repo`) |
+| `admin.token` | (empty) | Bearer token for admin API |
+| `poller.enabled` | `false` | Enable scheduled PR polling |
+| `poller.interval_seconds` | `7200` | Polling interval (2 hours) |
+| `auto_fix_users` | `[]` | GitHub logins eligible for auto-fix |
 
-Open http://localhost:8080 and navigate to the workflow to see:
-- Activity timeline showing parallel execution
-- 4 activities overlapping in time graph
+### Secrets
 
-## Project Structure
+Secrets can be provided via:
+1. **File-backed** (recommended): Set `secret_file`, `api_key_file`, or `token_file` in config.yaml
+2. **Environment variables**: `OPENROUTER_API_KEY`, `GITHUB_TOKEN`, `ADMIN_API_TOKEN`, `WEBHOOK_SECRET`
+3. **Config YAML**: `openrouter.api_key`, `webhook.secret`, `admin.token`
 
-```
-temporal-code-reviewer/
-├── activities/           # Agent implementations
-│   ├── security_agent.go
-│   ├── style_agent.go
-│   ├── logic_agent.go
-│   ├── docs_agent.go
-│   └── synthesis_agent.go
-├── dashboard/           # Real-time UI
-│   ├── server.go
-│   ├── templates/
-│   │   └── index.html
-│   └── static/
-│       ├── app.js
-│       └── style.css
-├── events/              # Event bus
-│   └── bus.go
-├── types/               # Shared types
-│   └── types.go
-├── webhook/             # GitHub integration
-│   └── handler.go
-├── workflows/           # Temporal orchestration
-│   └── pr_review.go
-├── main.go              # Service entry point
-├── docker-compose.yml   # Infrastructure
-├── Dockerfile           # Service container
-└── trigger-demo.sh      # Demo trigger script
-```
+File-backed secrets are read at startup. Environment variables override YAML values.
 
-## How It Works
+## Webhook setup
 
-### Workflow Execution
+1. In your GitHub repository, go to Settings → Webhooks → Add webhook.
+2. Set **Payload URL** to `http://your-server:8082/webhook/pr`.
+3. Set **Content type** to `application/json`.
+4. Set **Secret** to your webhook secret.
+5. Select **Pull requests** events.
+6. Ensure **Active** is checked.
 
-1. **Webhook Trigger**: GitHub sends PR event to `/webhook/pr`
-2. **Workflow Start**: the service starts a Temporal workflow
-3. **Parallel Agents**: 4 review agents execute simultaneously
-   - Security (5s): Checks for vulnerabilities
-   - Style (5-7s): Reviews code formatting
-   - Logic (8-10s): Validates correctness
-   - Documentation (6-8s): Checks docs
-4. **Synthesis**: Aggregates all results (3-5s)
-5. **Complete**: Final review summary generated
+The webhook:
+- Verifies `X-Hub-Signature-256` against the exact request body.
+- Validates the event type is `pull_request`.
+- Accepts only `opened`, `synchronize`, and `reopened` actions (configurable).
+- Deduplicates deliveries by `X-GitHub-Delivery`.
+- Enforces the repository allowlist when configured.
+- Rejects oversized payloads (>2MB by default).
 
-### Event Flow
+## Admin API
 
-- Activities publish events to the event bus
-- Dashboard subscribes via SSE
-- Real-time updates stream to browser
-- Progress tracked with heartbeats
+All admin endpoints require `Authorization: Bearer <token>` header when `admin.token` is configured.
 
-## Development
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Health check (unauthenticated) |
+| `/api/reviews` | GET | List all review records |
+| `/api/reviews/stream` | GET | SSE stream of new reviews |
+| `/api/reviews/submit` | POST | Submit a pending review |
+| `/api/reviews/skip` | POST | Record a PR skip |
+| `/api/reviews/delete` | DELETE | Clear dedup records |
+| `/api/reviews/force` | POST | Force re-review |
+| `/api/feedback` | POST | Record manual feedback |
+| `/api/metrics` | GET | Agent metrics |
 
-### Build Locally
+## Review coverage
 
-```bash
-go build -o temporal-code-reviewer .
-```
+When a diff exceeds 50,000 characters or 1,000 lines, it is truncated. The review result is marked `incomplete` and:
+- The GitHub review body discloses the incomplete coverage.
+- Auto-fix is disabled for that run.
+- Metrics do not count it as a successful complete review.
 
-### Run Without Docker
+## Auto-fix
 
-1. Start Temporal (requires separate setup)
-2. Set environment variable:
-   ```bash
-   export TEMPORAL_ADDRESS=localhost:7233
-   ```
-3. Run the service:
-   ```bash
-   ./temporal-code-reviewer
-   ```
+Auto-fix is **disabled by default**. To enable:
 
-### Run Tests
+1. Set `auto_fix_users` in config.yaml to the GitHub logins that should receive fix PRs.
+2. The PR author must be in the allowlist (checked against GitHub API, not webhook sender).
+3. The fix applies only to files in the reviewed diff that were covered by the review.
+4. Patches are validated exactly before any GitHub branch is published.
+5. Generated fix PRs require human review and are never merged automatically.
+
+### Fork PRs
+
+Auto-fix is not supported for fork-originated PRs. The system detects fork PRs and skips auto-fix with a clear reason.
+
+## Feedback collection
+
+Feedback monitoring is **disabled by default** (feedback poller only starts when a GitHub review ID exists). The poller records raw observations every 2 hours for up to 7 days:
+
+- Comment deletions
+- Reactions (+1, -1, heart, hooray, rocket, confused)
+- Replies to review comments
+
+These are stored as raw observations. The system does **not** interpret them as ground truth labels. See `SECURITY.md` for the quarantined feedback semantics.
+
+## Dashboard
+
+The dashboard at `http://localhost:8081/dashboard?workflowId=<id>` shows real-time agent progress via SSE. State is persisted to SQLite and survives application restarts.
+
+## Testing
 
 ```bash
 go test ./...
+go test -race ./...
+go vet ./...
 ```
 
-## Temporal Best Practices
+## Backup and removal
 
-This implementation follows Temporal workflow determinism rules:
+- **SQLite database**: `~/.config/temporal-reviewer/metrics.db`
+- **Temporal state**: Managed by Temporal server (PostgreSQL). To clear, delete the `code-reviewer` namespace.
+- **Docker volumes**: `docker compose down -v` removes all data.
 
-- ✅ Uses `workflow.Now(ctx)` instead of `time.Now()`
-- ✅ All external calls are activities
-- ✅ Activities record heartbeats for long operations
-- ✅ Proper timeout and retry configurations
-- ✅ Event-driven progress tracking
+## Known limitations
 
-## Success Criteria
-
-- [x] Docker Compose starts full stack
-- [x] Dashboard loads at http://localhost:8081
-- [x] Webhook triggers workflow successfully
-- [x] Dashboard shows 4 agents running in parallel
-- [x] Progress bars update smoothly in real-time
-- [x] Synthesis agent starts only after all 4 complete
-- [x] Temporal UI shows parallel activity execution
-- [x] Total execution time: 15-20 seconds
-
-## Demo Script
-
-```bash
-# Terminal 1: Start services
-docker-compose up
-
-# Terminal 2: Trigger review
-./trigger-demo.sh
-
-# Browser: Open dashboard URL (from trigger response)
-# Watch: Parallel agents → synthesis → complete
-
-# Temporal UI: http://localhost:8080
-# Verify: Activity timeline shows parallelism
-```
-
-## Customization
-
-### Adjust Agent Timing
-
-Edit the sleep durations in `activities/*_agent.go`:
-
-```go
-time.Sleep(1 * time.Second) // Adjust per agent
-```
-
-### Add New Agents
-
-1. Create `activities/my_agent.go`
-2. Register in `main.go`
-3. Add to workflow parallel execution
-4. Update dashboard UI
-
-### Modify Dashboard
-
-- UI: `dashboard/templates/index.html`
-- Styling: `dashboard/static/style.css`
-- Logic: `dashboard/static/app.js`
-
-## Troubleshooting
-
-**Temporal won't start:**
-- Wait 30 seconds for initialization
-- Check PostgreSQL is running: `docker ps`
-- Check logs: `docker-compose logs temporal`
-
-**Dashboard not updating:**
-- Check browser console for SSE errors
-- Verify workflow ID in URL matches running workflow
-- Check event bus is receiving events
-
-**Activities not executing:**
-- Verify worker is registered: check logs
-- Ensure activity names match workflow calls
-- Check Temporal UI for activity failures
+- Diff truncation at 50K chars/1K lines means large PRs get incomplete reviews.
+- Auto-fix does not support fork PRs.
+- Feedback interpretation is quarantined — no automated quality labels.
+- The feedback poller polls every 2 hours (configurable). Earlier versions polled every 5 minutes.
+- Dashboard SSE is best-effort; the client loads a durable snapshot from SQLite on connect.
 
 ## License
 
-MIT
-
-## Credits
-
-Built with:
-- [Temporal](https://temporal.io) - Workflow orchestration
-- [Go](https://golang.org) - Backend language
-- [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) - Real-time updates
+MIT — see [LICENSE](LICENSE).

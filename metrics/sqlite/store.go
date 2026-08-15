@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rikdc/temporal-code-reviewer/metrics"
+	"github.com/rikdc/temporal-code-reviewer/reviews"
 	_ "modernc.org/sqlite"
 )
 
@@ -83,6 +84,25 @@ CREATE INDEX IF NOT EXISTS idx_findings_comment ON findings(github_comment_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_finding ON feedback_events(finding_id);
 CREATE INDEX IF NOT EXISTS idx_prompt_versions_agent ON prompt_versions(agent_name, disabled);
 CREATE INDEX IF NOT EXISTS idx_review_runs_lookup ON review_runs(repo_owner, repo_name, pr_number, head_sha);
+
+CREATE TABLE IF NOT EXISTS review_records (
+	id               TEXT PRIMARY KEY,
+	repo_owner       TEXT NOT NULL,
+	repo_name        TEXT NOT NULL,
+	pr_number        INTEGER NOT NULL,
+	title            TEXT NOT NULL DEFAULT '',
+	pr_author        TEXT NOT NULL DEFAULT '',
+	head_sha         TEXT NOT NULL DEFAULT '',
+	pr_url           TEXT NOT NULL DEFAULT '',
+	state            TEXT NOT NULL DEFAULT 'pending',
+	posted_at        DATETIME NOT NULL DEFAULT (datetime('now')),
+	updated_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+	github_review_id INTEGER NOT NULL DEFAULT 0,
+	review_body      TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_records_pr ON review_records(repo_owner, repo_name, pr_number);
+CREATE INDEX IF NOT EXISTS idx_review_records_state ON review_records(state);
 `
 
 // Store is the SQLite implementation of metrics.Repository.
@@ -110,6 +130,9 @@ func Open(path string) (*Store, error) {
 
 // Close closes the underlying database connection.
 func (s *Store) Close() error { return s.db.Close() }
+
+// Ping verifies the database connection is alive.
+func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func ensureID(id string) string {
 	if id == "" {
@@ -438,6 +461,56 @@ func (s *Store) ListAgentMetrics(ctx context.Context, since time.Time) ([]metric
 		result = append(result, m)
 	}
 	return result, rows.Err()
+}
+
+// SaveReviewRecord inserts or replaces a review record in SQLite.
+func (s *Store) SaveReviewRecord(ctx context.Context, id, repoOwner, repoName string, prNumber int, title, prAuthor, headSHA, prURL, state, reviewBody string, githubReviewID int64, postedAt, updatedAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO review_records (id, repo_owner, repo_name, pr_number, title, pr_author, head_sha, pr_url, state, posted_at, updated_at, github_review_id, review_body)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, repoOwner, repoName, prNumber, title, prAuthor, headSHA, prURL, state,
+		postedAt.UTC().Format(time.RFC3339), updatedAt.UTC().Format(time.RFC3339),
+		githubReviewID, reviewBody,
+	)
+	return err
+}
+
+// ListReviewRecords returns all review records ordered by posted_at ascending.
+func (s *Store) ListReviewRecords(ctx context.Context) ([]reviews.ReviewRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, repo_owner, repo_name, pr_number, title, pr_author, head_sha, pr_url, state, posted_at, updated_at, github_review_id, review_body
+		 FROM review_records ORDER BY posted_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanReviewRecords(rows)
+}
+
+// UpdateReviewRecordState updates the state of a review record.
+func (s *Store) UpdateReviewRecordState(ctx context.Context, repoOwner, repoName string, prNumber int, state string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE review_records SET state = ?, updated_at = datetime('now')
+		 WHERE repo_owner = ? AND repo_name = ? AND pr_number = ? AND state != ?`,
+		state, repoOwner, repoName, prNumber, state)
+	return err
+}
+
+func scanReviewRecords(rows *sql.Rows) ([]reviews.ReviewRecord, error) {
+	var out []reviews.ReviewRecord
+	for rows.Next() {
+		var r reviews.ReviewRecord
+		var postedAt, updatedAt string
+		if err := rows.Scan(&r.ID, &r.RepoOwner, &r.RepoName, &r.PRNumber,
+			&r.Title, &r.PRAuthor, &r.HeadSHA, &r.PRURL, &r.State,
+			&postedAt, &updatedAt, &r.GitHubReviewID, &r.ReviewBody); err != nil {
+			return nil, err
+		}
+		r.PostedAt, _ = time.Parse(time.RFC3339, postedAt)
+		r.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
