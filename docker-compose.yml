@@ -19,7 +19,7 @@ services:
       retries: 10
 
   temporal:
-    image: temporalio/auto-setup:1.25.0
+    image: temporalio/auto-setup:1.29.3
     container_name: lyon-temporal
     depends_on:
       postgresql:
@@ -41,7 +41,7 @@ services:
       start_period: 30s
 
   temporal-ui:
-    image: temporalio/ui:2.30.0
+    image: temporalio/ui:2.53.2
     container_name: lyon-temporal-ui
     depends_on:
       temporal:
