@@ -20,6 +20,7 @@ import (
 	"github.com/rikdc/temporal-code-reviewer/events"
 	"github.com/rikdc/temporal-code-reviewer/llm"
 	"github.com/rikdc/temporal-code-reviewer/metrics"
+	"github.com/rikdc/temporal-code-reviewer/middleware"
 	metricsqlite "github.com/rikdc/temporal-code-reviewer/metrics/sqlite"
 	"github.com/rikdc/temporal-code-reviewer/reviews"
 	"github.com/rikdc/temporal-code-reviewer/types"
@@ -27,6 +28,7 @@ import (
 	"github.com/rikdc/temporal-code-reviewer/workflows"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
@@ -41,31 +43,26 @@ func main() {
 	}
 	defer logger.Sync()
 
-	logger.Info("Starting Temporal Code Review Service")
+	logger.Info("Starting Temporal Code Reviewer")
 
-	// Load configuration
-	logger.Info("Loading configuration from config.yaml")
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
 		logger.Fatal("Failed to load config", zap.Error(err))
 	}
 	logger.Info("Configuration loaded successfully",
-		zap.String("openrouter_url", cfg.OpenRouter.BaseURL),
-		zap.Bool("api_key_set", cfg.OpenRouter.APIKey != ""))
+		zap.Bool("api_key_set", cfg.OpenRouter.APIKey != ""),
+		zap.Bool("webhook_enabled", cfg.Webhook.Enabled),
+		zap.Bool("admin_auth", cfg.Admin.Token != ""))
 
-	// Initialize LLM client
-	logger.Info("Initializing OpenRouter LLM client")
 	llmClient := llm.NewClient(&cfg.OpenRouter, logger)
-
-	// Initialize prompt loader (disk fallback)
 	promptLoader := llm.NewPromptLoader("prompts")
 
-	// Initialize metrics store
+	// Metrics store
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		logger.Fatal("Failed to get home directory", zap.Error(err))
 	}
-	metricsDBPath := filepath.Join(homeDir, ".config", "prism", "metrics.db")
+	metricsDBPath := filepath.Join(homeDir, ".config", "temporal-reviewer", "metrics.db")
 	metricsStore, err := metricsqlite.Open(metricsDBPath)
 	if err != nil {
 		logger.Fatal("Failed to open metrics database", zap.String("path", metricsDBPath), zap.Error(err))
@@ -73,7 +70,7 @@ func main() {
 	defer metricsStore.Close()
 	logger.Info("Metrics database opened", zap.String("path", metricsDBPath))
 
-	// Seed prompt versions from disk if no DB versions exist yet.
+	// Seed prompts
 	type agentSeed struct{ name, file string }
 	seeds := []agentSeed{
 		{"Security", cfg.Agents.Security.PromptFile},
@@ -93,38 +90,34 @@ func main() {
 		}
 	}
 
-	// Build prompt registry (A/B selection backed by DB).
 	promptRegistry := metrics.NewPromptRegistry(metricsStore, promptLoader)
 
-	// Initialize event bus
 	eventBus := events.NewEventBus()
-
-	// Initialize review store (in-memory, feeds SSE dashboard)
 	reviewStore := reviews.NewStore()
 
-	// Get Temporal address from environment
-	temporalAddress := os.Getenv("TEMPORAL_ADDRESS")
-	if temporalAddress == "" {
-		temporalAddress = "localhost:7233"
-	}
-
-	// Get GitHub token and create SDK client
+	// GitHub client
 	githubToken := os.Getenv("GITHUB_TOKEN")
 	var ghClient *github.Client
 	if githubToken != "" {
 		ghClient = github.NewClient(nil).WithAuthToken(githubToken)
 	} else {
-		logger.Warn("GITHUB_TOKEN not set — triage auto-fix features will not work")
+		logger.Warn("GITHUB_TOKEN not set — GitHub integration disabled")
 	}
 
 	// Connect to Temporal
+	temporalAddress := os.Getenv("TEMPORAL_ADDRESS")
+	if temporalAddress == "" {
+		temporalAddress = "localhost:7233"
+	}
 	temporalNamespace := cfg.Temporal.Namespace
 	if temporalNamespace == "" {
 		temporalNamespace = "default"
 	}
+
 	logger.Info("Connecting to Temporal",
 		zap.String("address", temporalAddress),
 		zap.String("namespace", temporalNamespace))
+
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  temporalAddress,
 		Namespace: temporalNamespace,
@@ -135,7 +128,6 @@ func main() {
 	defer temporalClient.Close()
 
 	// Create Temporal worker
-	logger.Info("Creating Temporal worker")
 	w := worker.New(temporalClient, "pr-review-queue", worker.Options{
 		MaxConcurrentActivityExecutionSize: 10,
 	})
@@ -144,8 +136,9 @@ func main() {
 	w.RegisterWorkflow(workflows.PRReviewWorkflow)
 	w.RegisterWorkflow(workflows.FixFindingWorkflow)
 	w.RegisterWorkflow(workflows.PollPRsWorkflow)
+	w.RegisterWorkflow(workflows.FeedbackPollerWorkflow)
 
-	// Create diff fetcher activity
+	// Register activities
 	diffFetcher := activities.NewDiffFetcher(logger, ghClient)
 	w.RegisterActivityWithOptions(
 		diffFetcher.FetchDiff,
@@ -174,10 +167,8 @@ func main() {
 		activity.RegisterOptions{Name: activities.ActivitySynthesis},
 	)
 
-	// Register triage agent
-	triageAgent := activities.NewTriageAgent(eventBus, logger, llmClient, &cfg.Agents.Triage, promptRegistry)
 	w.RegisterActivityWithOptions(
-		triageAgent.Execute,
+		activities.NewTriageAgent(eventBus, logger, llmClient, &cfg.Agents.Triage, promptRegistry).Execute,
 		activity.RegisterOptions{Name: activities.ActivityTriage},
 	)
 
@@ -231,13 +222,12 @@ func main() {
 		activity.RegisterOptions{Name: activities.ActivityRecordSkip},
 	)
 
-	// Register feedback poller activity and workflow
+	// Register feedback poller activity
 	feedbackPollerActivity := activities.NewFeedbackPollerActivity(ghClient, metricsStore, logger, reviewStore)
 	w.RegisterActivityWithOptions(
 		feedbackPollerActivity.CheckFeedback,
 		activity.RegisterOptions{Name: activities.ActivityCheckFeedback},
 	)
-	w.RegisterWorkflow(workflows.FeedbackPollerWorkflow)
 
 	// Register post review activity
 	postReviewActivity := activities.NewPostReviewActivity(ghClient, logger, reviewStore, metricsStore)
@@ -251,18 +241,16 @@ func main() {
 	)
 
 	// Start worker in background
-	logger.Info("Starting Temporal worker")
 	go func() {
 		if err := w.Run(worker.InterruptCh()); err != nil {
 			logger.Fatal("Worker failed", zap.Error(err))
 		}
 	}()
 
-	// Start dashboard server in background
-	logger.Info("Starting dashboard server on :8081")
+	// Start dashboard server
 	dashboardServer := dashboard.NewServer(eventBus, logger)
 	go func() {
-		if err := dashboardServer.Start(":8081"); err != nil {
+		if err := dashboardServer.Start(cfg.Server.DashboardAddress); err != nil {
 			logger.Fatal("Dashboard server failed", zap.Error(err))
 		}
 	}()
@@ -277,28 +265,30 @@ func main() {
 	}
 
 	// Start webhook server
-	logger.Info("Starting webhook server on :8082")
 	webhookHandler := webhook.NewHandler(temporalClient, logger, cfg.AutoFixUsers)
 	reviewsHandler := reviews.NewHandler(reviewStore, ghClient, logger)
+	adminAuth := middleware.BearerAuth(cfg.Admin.Token)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook/pr", webhookHandler.HandlePR)
-	mux.HandleFunc("/api/reviews", reviewsHandler.HandleList)
-	mux.HandleFunc("/api/reviews/stream", reviewsHandler.HandleStream)
-	mux.HandleFunc("/api/reviews/submit", reviewsHandler.HandleSubmit)
-	mux.HandleFunc("/api/reviews/skip", skipHandler(metricsStore, logger))
-	mux.HandleFunc("/api/reviews/delete", deleteReviewHandler(metricsStore, logger))
-	mux.HandleFunc("/api/reviews/force", forceReviewHandler(metricsStore, ghClient, temporalClient, logger))
-	mux.HandleFunc("/api/feedback", feedbackHandler(metricsStore, logger))
-	mux.HandleFunc("/api/metrics", metricsHandler(metricsStore, logger))
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	mux.Handle("/api/reviews", adminAuth(http.HandlerFunc(reviewsHandler.HandleList)))
+	mux.Handle("/api/reviews/stream", adminAuth(http.HandlerFunc(reviewsHandler.HandleStream)))
+	mux.Handle("/api/reviews/submit", adminAuth(http.HandlerFunc(reviewsHandler.HandleSubmit)))
+	mux.Handle("/api/reviews/skip", adminAuth(skipHandler(metricsStore, logger)))
+	mux.Handle("/api/reviews/delete", adminAuth(deleteReviewHandler(metricsStore, logger)))
+	mux.Handle("/api/reviews/force", adminAuth(forceReviewHandler(metricsStore, ghClient, temporalClient, logger)))
+	mux.Handle("/api/feedback", adminAuth(feedbackHandler(metricsStore, logger)))
+	mux.Handle("/api/metrics", adminAuth(metricsHandler(metricsStore, logger)))
+	mux.HandleFunc("/health", healthHandler(temporalClient, cfg))
 
 	server := &http.Server{
-		Addr:    ":8082",
-		Handler: mux,
+		Addr:              cfg.Server.BindAddress,
+		Handler:           mux,
+		ReadTimeout:       time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout:      time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:       time.Duration(cfg.Server.IdleTimeout) * time.Second,
+		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Handle graceful shutdown
@@ -660,4 +650,35 @@ func upsertPollerSchedule(ctx context.Context, temporalClient client.Client, cfg
 	logger.Info("Created poller schedule",
 		zap.String("schedule_id", scheduleID),
 		zap.Strings("repos", cfg.Poller.Repos))
+}
+
+func healthHandler(temporalClient client.Client, cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		status := "ok"
+		temporalStatus := "ok"
+
+		if temporalClient == nil {
+			temporalStatus = "error"
+			status = "degraded"
+		} else {
+			namespace := cfg.Temporal.Namespace
+			if namespace == "" {
+				namespace = "default"
+			}
+			if _, err := temporalClient.WorkflowService().DescribeNamespace(r.Context(), &workflowservice.DescribeNamespaceRequest{
+				Namespace: namespace,
+			}); err != nil {
+				temporalStatus = "error"
+				status = "degraded"
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":   status,
+			"temporal": temporalStatus,
+		})
+	}
 }
