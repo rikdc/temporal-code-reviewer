@@ -41,7 +41,7 @@ services:
       start_period: 30s
 
   temporal-ui:
-    image: temporalio/ui:2.53.2
+    image: temporalio/ui:2.53.3
     container_name: lyon-temporal-ui
     depends_on:
       temporal:
